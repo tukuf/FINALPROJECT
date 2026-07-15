@@ -15,6 +15,7 @@ urlpatterns = [
     path("property/<int:property_id>/rent/", rent_property),
     # 📩 RENTAL REQUEST
     path("rental_request/", manage_rentalrequest),
+    path("rental_request/<int:id>/", manage_rentalrequest),
     path("rental-request/<int:id>/update/", update_rentalrequest),
     # ❤️ SAVED PROPERTY
     path("saved_property/", manage_savedproperty),

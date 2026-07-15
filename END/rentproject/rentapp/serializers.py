@@ -25,13 +25,22 @@ class PropertySerializer(serializers.ModelSerializer):
     def get_next_available_date(self, obj):
         if obj.is_available:
             return None
-        # Get the latest contract for this property to find when it ends
+        # Check both Contract and approved RentalRequest for the latest end_date
+        latest_date = None
         latest_contract = (
             Contract.objects.filter(property=obj).order_by("-end_date").first()
         )
-        if latest_contract:
-            return latest_contract.end_date
-        return None
+        if latest_contract and latest_contract.end_date:
+            latest_date = latest_contract.end_date
+        latest_approved_request = (
+            RentalRequest.objects.filter(property=obj, status="APPROVED")
+            .order_by("-end_date")
+            .first()
+        )
+        if latest_approved_request and latest_approved_request.end_date:
+            if latest_date is None or latest_approved_request.end_date > latest_date:
+                latest_date = latest_approved_request.end_date
+        return latest_date
 
     def get_average_rating(self, obj):
         if obj.rating_count == 0:

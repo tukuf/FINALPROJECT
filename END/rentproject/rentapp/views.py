@@ -1,3 +1,5 @@
+from datetime import date
+
 from django.contrib.auth import authenticate, login
 from django.contrib.auth.hashers import make_password
 from django.shortcuts import render
@@ -10,6 +12,38 @@ from rest_framework.response import Response
 from .models import *
 from .models import User
 from .serializers import *
+
+
+def auto_update_property_availability():
+    """Check all occupied properties and auto-make available if the current date
+    is equal to or past the property's next available date (latest contract end_date
+    or latest approved RentalRequest end_date)."""
+    today = date.today()
+    occupied_properties = Property.objects.filter(is_available=False)
+    for prop in occupied_properties:
+        # Find the latest end_date from contracts
+        latest_contract = (
+            Contract.objects.filter(property=prop)
+            .order_by("-end_date")
+            .first()
+        )
+        latest_date = None
+        if latest_contract and latest_contract.end_date:
+            latest_date = latest_contract.end_date
+
+        # Also check approved RentalRequests
+        latest_approved_request = (
+            RentalRequest.objects.filter(property=prop, status="APPROVED")
+            .order_by("-end_date")
+            .first()
+        )
+        if latest_approved_request and latest_approved_request.end_date:
+            if latest_date is None or latest_approved_request.end_date > latest_date:
+                latest_date = latest_approved_request.end_date
+
+        if latest_date and today >= latest_date:
+            prop.is_available = True
+            prop.save(update_fields=["is_available"])
 
 # ===============================
 # 🔁 GENERIC CRUD API
@@ -49,6 +83,11 @@ def generic_api(model_class, serializer_class):
                 try:
                     instance = model_class.objects.get(id=id)
 
+                    # Auto-update availability for properties
+                    if model_class == Property:
+                        auto_update_property_availability()
+                        instance.refresh_from_db()
+
                     # 🔐 Ownership check
                     is_owner = (
                         hasattr(instance, "user") and instance.user == user
@@ -68,6 +107,10 @@ def generic_api(model_class, serializer_class):
                     return Response({"error": "Not found"}, status=404)
 
             else:
+                # Auto-update availability for properties before returning list
+                if model_class == Property:
+                    auto_update_property_availability()
+
                 # 🔐 Admin sees all EXCEPT for notifications (only see their own)
                 if user.is_staff:
                     if model_class == Notification:
@@ -225,10 +268,103 @@ def generic_api(model_class, serializer_class):
 # ===============================
 manage_user = generic_api(User, UserSerializer)
 manage_property = generic_api(Property, PropertySerializer)
-manage_rentalrequest = generic_api(RentalRequest, RentalRequestSerializer)
 manage_savedproperty = generic_api(SavedProperty, SavedPropertySerializer)
 manage_notification = generic_api(Notification, NotificationSerializer)
 manage_contract = generic_api(Contract, ContractSerializer)
+
+
+# ===============================
+# 🗑️  RENTAL REQUEST  (fully self-contained, with admin-delete notification)
+# ===============================
+@api_view(["GET", "POST", "PUT", "PATCH", "DELETE"])
+@permission_classes([IsAuthenticated])
+def manage_rentalrequest(request, id=None):
+    """
+    Self-contained CRUD for RentalRequest.
+    Intercepts admin DELETE to send a notification to the customer
+    before removing the record. All other logic mirrors the generic_api handler.
+    """
+    user = request.user
+
+    # ── GET ──────────────────────────────────────────────────────────────
+    if request.method == "GET":
+        if id:
+            try:
+                instance = RentalRequest.objects.get(id=id)
+                is_owner = instance.user == user
+                if not is_owner and not user.is_staff:
+                    return Response({"error": "Unauthorized"}, status=403)
+                serializer = RentalRequestSerializer(instance, context={"request": request})
+                return Response(serializer.data)
+            except RentalRequest.DoesNotExist:
+                return Response({"error": "Not found"}, status=404)
+        else:
+            if user.is_staff:
+                queryset = RentalRequest.objects.all()
+            else:
+                queryset = RentalRequest.objects.filter(user=user)
+            serializer = RentalRequestSerializer(queryset, many=True, context={"request": request})
+            return Response(serializer.data)
+
+    # ── POST ─────────────────────────────────────────────────────────────
+    elif request.method == "POST":
+        serializer = RentalRequestSerializer(data=request.data, context={"request": request})
+        if serializer.is_valid():
+            serializer.save(user=user)
+            return Response(serializer.data)
+        return Response(serializer.errors, status=400)
+
+    # ── PUT / PATCH ───────────────────────────────────────────────────────
+    elif request.method in ["PUT", "PATCH"]:
+        if not id:
+            return Response({"error": "ID required"}, status=400)
+        try:
+            instance = RentalRequest.objects.get(id=id)
+            is_owner = instance.user == user
+            if not is_owner and not user.is_staff:
+                return Response({"error": "Unauthorized"}, status=403)
+            partial = request.method == "PATCH"
+            serializer = RentalRequestSerializer(
+                instance, data=request.data, context={"request": request}, partial=partial
+            )
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data)
+            return Response(serializer.errors, status=400)
+        except RentalRequest.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+    # ── DELETE ────────────────────────────────────────────────────────────
+    elif request.method == "DELETE":
+        if not id:
+            return Response({"error": "ID required"}, status=400)
+        try:
+            instance = RentalRequest.objects.get(id=id)
+
+            # Only admin or the request owner can delete
+            is_owner = instance.user == user
+            if not is_owner and not user.is_staff:
+                return Response({"error": "Unauthorized"}, status=403)
+
+            # 🔔 If admin is deleting → notify the customer
+            if user.is_staff:
+                Notification.objects.create(
+                    user=instance.user,
+                    message=(
+                        f"Your rental request for '{instance.property.title}' has been removed "
+                        f"by the administrator. "
+                        f"The request was neither approved nor rejected — "
+                        f"please contact us if you have any questions."
+                    ),
+                    type="RENT_REQUEST",
+                )
+
+            instance.delete()
+            return Response({"message": "Rental request deleted successfully."})
+
+        except RentalRequest.DoesNotExist:
+            return Response({"error": "Request not found"}, status=404)
+
 
 
 # ===============================
