@@ -63,6 +63,7 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOW_ALL_ORIGINS = True  # For development purposes
+CORS_URLS_REGEX = r"^.*$"     # Apply CORS to ALL paths including /media/
 
 ROOT_URLCONF = "rentproject.urls"
 
