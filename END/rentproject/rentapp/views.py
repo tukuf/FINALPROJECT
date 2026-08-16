@@ -17,12 +17,6 @@ from rest_framework.response import Response
 from .models import *
 from .models import User
 from .serializers import *
-    FAILED_STATUSES,
-    SUCCESS_STATUSES,
-    generate_payment_reference,
-    normalize_tanzania_phone,
-    verify_checksum,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -1041,11 +1035,6 @@ def initiate_mobile_payment(request):
     ).exists():
         return Response({"error": "This reservation is already paid."}, status=400)
 
-    try:
-        normalized_phone = normalize_tanzania_phone(phone_number)
-    except ValueError as exc:
-        return Response({"error": str(exc)}, status=400)
-
     expected_amount = reservation.total_amount
     submitted_amount = data.get("amount")
     if submitted_amount not in [None, ""]:
@@ -1055,12 +1044,10 @@ def initiate_mobile_payment(request):
         except (InvalidOperation, TypeError):
             return Response({"error": "Invalid payment amount."}, status=400)
 
-    reference = generate_payment_reference()
-
     payment = Payment.objects.create(
         reservation=reservation,
         payment_method=payment_method,
-        phone_number=normalized_phone,
+        phone_number=phone_number,
         amount=expected_amount,
         payment_status=Payment.STATUS_PENDING,
     )
@@ -1075,7 +1062,7 @@ def initiate_mobile_payment(request):
         user=request.user,
         message=(
             f"Payment request for '{reservation.property.title}' was sent to "
-            f"{normalized_phone}. Complete the prompt on your phone."
+            f"{phone_number}. Complete the prompt on your phone."
         ),
         type="GENERAL",
     )
