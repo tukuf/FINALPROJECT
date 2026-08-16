@@ -311,18 +311,20 @@ class Reservation(models.Model):
 class Payment(models.Model):
     STATUS_PENDING = "PENDING"
     STATUS_SUCCESSFUL = "SUCCESSFUL"
+    STATUS_PAID = "PAID"
     STATUS_FAILED = "FAILED"
 
     PAYMENT_STATUS_CHOICES = [
         (STATUS_PENDING, "Pending"),
         (STATUS_SUCCESSFUL, "Successful"),
+        (STATUS_PAID, "Paid"),
         (STATUS_FAILED, "Failed"),
     ]
 
-    reservation = models.OneToOneField(
+    reservation = models.ForeignKey(
         Reservation,
         on_delete=models.CASCADE,
-        related_name="payment"
+        related_name="payments"
     )
     payment_method = models.CharField(max_length=50)
     phone_number = models.CharField(max_length=20)
@@ -332,11 +334,20 @@ class Payment(models.Model):
         choices=PAYMENT_STATUS_CHOICES,
         default=STATUS_PENDING
     )
-    transaction_id = models.CharField(max_length=100, null=True, blank=True)
+    provider_transaction_id = models.CharField(max_length=120, null=True, blank=True)
+    transaction_id = models.CharField(max_length=120, null=True, blank=True)
+    provider_status = models.CharField(max_length=50, blank=True, default="")
+    initiation_response = models.JSONField(default=dict, blank=True)
+    webhook_payload = models.JSONField(default=dict, blank=True)
+    webhook_received_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["payment_status"]),
+        ]
 
     def __str__(self):
         return f"Payment for Reservation #{self.reservation.id} - {self.payment_status}"

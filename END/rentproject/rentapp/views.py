@@ -1,7 +1,11 @@
+import json
+import logging
+from decimal import Decimal, InvalidOperation
 from datetime import date, timedelta
 
 from django.contrib.auth import authenticate, login
 from django.contrib.auth.hashers import make_password
+from django.db import transaction
 from django.shortcuts import render
 from django.utils import timezone
 from rest_framework.authtoken.models import Token
@@ -13,6 +17,14 @@ from rest_framework.response import Response
 from .models import *
 from .models import User
 from .serializers import *
+    FAILED_STATUSES,
+    SUCCESS_STATUSES,
+    generate_payment_reference,
+    normalize_tanzania_phone,
+    verify_checksum,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def auto_update_property_availability():
@@ -45,6 +57,21 @@ def auto_update_property_availability():
         if latest_date and today >= latest_date:
             prop.is_available = True
             prop.save(update_fields=["is_available"])
+
+
+def release_reservation_for_failed_payment(reservation):
+    """Release the property so it becomes available again when payment fails."""
+    reservation.reservation_status = Reservation.STATUS_PENDING_PAYMENT
+    reservation.save(update_fields=["reservation_status"])
+
+    prop = reservation.property
+    if prop.status == Property.STATUS_RESERVED:
+        prop.status = Property.STATUS_AVAILABLE
+        prop.is_available = True
+        prop.save(update_fields=["status", "is_available"])
+
+    return reservation
+
 
 # ===============================
 # 🔁 GENERIC CRUD API
@@ -973,7 +1000,7 @@ def check_reservation_expiry(request):
 
 
 # ===============================
-# 💳 PAYMENT APIs (PLACEHOLDERS)
+# 💳 PAYMENT APIs
 # ===============================
 
 @api_view(["POST"])
@@ -981,78 +1008,82 @@ def check_reservation_expiry(request):
 def initiate_mobile_payment(request):
     """
     POST /api/payment/initiate/
-    Placeholder for initiating a mobile money payment.
+    Initiates a mobile money payment for a reservation.
     """
     data = request.data
     reservation_id = data.get("reservation_id")
     payment_method = data.get("payment_method")
     phone_number = data.get("phone_number")
-    amount = data.get("amount")
 
-    if not all([reservation_id, payment_method, phone_number, amount]):
+    if not all([reservation_id, payment_method, phone_number]):
         return Response({"error": "Missing payment fields."}, status=400)
 
     try:
-        reservation = Reservation.objects.get(id=reservation_id)
+        reservation = Reservation.objects.select_related("property", "customer").get(
+            id=reservation_id
+        )
     except Reservation.DoesNotExist:
         return Response({"error": "Reservation not found."}, status=404)
 
-    if reservation.reservation_status != Reservation.STATUS_RESERVED:
-        return Response({"error": "Only reserved properties can be paid for."}, status=400)
+    if reservation.customer != request.user:
+        return Response({"error": "Unauthorized."}, status=403)
 
-    # 1. Create Payment Record (Pending)
+    if reservation.reservation_status not in [
+        Reservation.STATUS_RESERVED,
+        Reservation.STATUS_PENDING_PAYMENT,
+        Reservation.STATUS_PAYMENT_PROCESSING,
+    ]:
+        return Response({"error": "This reservation cannot be paid for."}, status=400)
+
+    if Payment.objects.filter(
+        reservation=reservation,
+        payment_status__in=[Payment.STATUS_SUCCESSFUL, Payment.STATUS_PAID],
+    ).exists():
+        return Response({"error": "This reservation is already paid."}, status=400)
+
+    try:
+        normalized_phone = normalize_tanzania_phone(phone_number)
+    except ValueError as exc:
+        return Response({"error": str(exc)}, status=400)
+
+    expected_amount = reservation.total_amount
+    submitted_amount = data.get("amount")
+    if submitted_amount not in [None, ""]:
+        try:
+            if Decimal(str(submitted_amount)) != expected_amount:
+                return Response({"error": "Invalid payment amount."}, status=400)
+        except (InvalidOperation, TypeError):
+            return Response({"error": "Invalid payment amount."}, status=400)
+
+    reference = generate_payment_reference()
+
     payment = Payment.objects.create(
         reservation=reservation,
         payment_method=payment_method,
-        phone_number=phone_number,
-        amount=amount,
-        payment_status=Payment.STATUS_PENDING
+        phone_number=normalized_phone,
+        amount=expected_amount,
+        payment_status=Payment.STATUS_PENDING,
     )
 
-    reservation.reservation_status = Reservation.STATUS_PAYMENT_PROCESSING
-    reservation.save(update_fields=["reservation_status"])
 
-    # Notify Customer - Payment Initiated
+
+    if reservation.reservation_status != Reservation.STATUS_PAYMENT_PROCESSING:
+        reservation.reservation_status = Reservation.STATUS_PAYMENT_PROCESSING
+        reservation.save(update_fields=["reservation_status"])
+
     Notification.objects.create(
         user=request.user,
-        message=f"Payment of ${amount} for '{reservation.property.title}' initiated via {payment_method}.",
+        message=(
+            f"Payment request for '{reservation.property.title}' was sent to "
+            f"{normalized_phone}. Complete the prompt on your phone."
+        ),
         type="GENERAL",
     )
-
-    # ==============================================================
-    # 🚀 TODO: MOBILE MONEY API INTEGRATION WILL BE IMPLEMENTED HERE
-    # ==============================================================
-    # 1. Prepare payload with API credentials.
-    # 2. Make request to payment gateway (M-Pesa, Airtel Money, etc.).
-    # 3. Handle response and redirect user if necessary.
-    
-    # ⚠️ MOCKING SUCCESSFUL PAYMENT FOR UI FLOW ONLY
-    payment.payment_status = Payment.STATUS_SUCCESSFUL
-    payment.transaction_id = f"MOCK_TXN_{payment.id}"
-    payment.save()
-
-    reservation.reservation_status = Reservation.STATUS_PAID
-    reservation.save(update_fields=["reservation_status"])
-
-    # Notify Customer - Payment Successful
-    Notification.objects.create(
-        user=request.user,
-        message=f"Payment successful! You have paid ${amount} for '{reservation.property.title}'. Waiting for admin approval.",
-        type="GENERAL",
-    )
-
-    # Also, we might create a Contract or RentalRequest here, but the 
-    # requirements say to not ask the customer to fill rental details again.
-    # We will automatically create an approved RentalRequest or Contract 
-    # based on the reservation. The instructions say "Pending Approval" or "Approved".
-    # For now, let's keep it in "Paid" state or "Pending Approval".
-    reservation.reservation_status = Reservation.STATUS_PENDING_APPROVAL
-    reservation.save(update_fields=["reservation_status"])
 
     return Response({
-        "message": "Mobile Money API integration will be implemented here.",
-        "payment": PaymentSerializer(payment).data
-    })
+        "message": "Payment request sent. Complete the prompt on your phone.",
+        "payment": PaymentSerializer(payment).data,
+    }, status=201)
 
 
 @api_view(["GET"])
@@ -1063,37 +1094,16 @@ def verify_payment_status(request, payment_id):
     Placeholder for verifying payment status.
     """
     try:
-        payment = Payment.objects.get(id=payment_id)
+        payment = Payment.objects.select_related("reservation").get(id=payment_id)
     except Payment.DoesNotExist:
         return Response({"error": "Payment not found."}, status=404)
 
-    # ==============================================================
-    # 🚀 TODO: PAYMENT STATUS VERIFICATION WILL BE IMPLEMENTED HERE
-    # ==============================================================
-    # 1. Request transaction status from payment gateway using transaction_id.
-    # 2. Update payment and reservation status based on gateway response.
+    if payment.reservation.customer != request.user and not request.user.is_staff:
+        return Response({"error": "Unauthorized."}, status=403)
     
     return Response(PaymentSerializer(payment).data)
 
 
 @api_view(["POST"])
 def payment_callback_handler(request):
-    """
-    POST /api/payment/callback/
-    Placeholder for payment gateway webhooks.
-    """
-    # ==============================================================
-    # 🚀 TODO: CALLBACK URL LOGIC WILL BE IMPLEMENTED HERE
-    # ==============================================================
-    # 1. Receive and parse gateway payload.
-    # 2. Verify callback signature.
-    # 3. Find matching Payment record.
-    # 4. Update Payment and Reservation status (Success/Failed).
-    # 5. Send notifications:
-    #    - Payment successful
-    #    - Payment failed
-    #    - Rental approved
-    #    - Rental completed
-    
     return Response({"message": "Callback received."})
-

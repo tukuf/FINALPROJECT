@@ -196,5 +196,26 @@ class ReservationSerializer(serializers.ModelSerializer):
 class PaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Payment
-        fields = "__all__"
-        read_only_fields = ["payment_status", "transaction_id", "created_at"]
+        fields = [
+            "id",
+            "reservation",
+            "payment_method",
+            "phone_number",
+            "amount",
+            "payment_status",
+            "provider_transaction_id",
+            "transaction_id",
+            "provider_status",
+            "webhook_received_at",
+            "updated_at",
+            "created_at",
+        ]
+        read_only_fields = [
+            "payment_status",
+            "provider_transaction_id",
+            "transaction_id",
+            "provider_status",
+            "webhook_received_at",
+            "updated_at",
+            "created_at",
+        ]

@@ -1,6 +1,5 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import api from "../services/authService";
-import Swal from "sweetalert2";
 
 const fmt = (d) =>
   d
@@ -12,130 +11,206 @@ const fmt = (d) =>
     : "N/A";
 
 const fmtMoney = (v) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
-    v ?? 0
+  new Intl.NumberFormat("en-US", { style: "currency", currency: "TZS" }).format(
+    Number(v ?? 0)
   );
 
 const PAYMENT_METHODS = [
-  { id: "MPESA", name: "M-Pesa", color: "#4ade80", icon: "🟢" }, // Placeholder icons
-  { id: "AIRTEL", name: "Airtel Money", color: "#ef4444", icon: "🔴" },
-  { id: "TIGO", name: "Tigo Pesa", color: "#3b82f6", icon: "🔵" },
-  { id: "HALOPESA", name: "HaloPesa", color: "#f97316", icon: "🟠" },
+  { id: "MPESA", name: "M-Pesa", tone: "#16a34a" },
+  { id: "AIRTEL", name: "Airtel Money", tone: "#dc2626" },
+  { id: "TIGO", name: "Tigo Pesa", tone: "#2563eb" },
+  { id: "HALOPESA", name: "HaloPesa", tone: "#ea580c" },
 ];
+
+const PAID_STATUSES = ["SUCCESSFUL", "PAID", "COMPLETED"];
+const FAILED_STATUSES = ["FAILED", "REJECTED", "CANCELLED", "TIMEOUT"];
+
+function normalizeTanzaniaPhone(value) {
+  let digits = String(value || "").replace(/\D/g, "");
+  if (digits.startsWith("00255")) digits = digits.slice(2);
+  else if (digits.startsWith("0") && digits.length === 10) digits = `255${digits.slice(1)}`;
+  else if ((digits.startsWith("7") || digits.startsWith("6")) && digits.length === 9) digits = `255${digits}`;
+  return digits;
+}
+
+function validateTanzaniaPhone(value) {
+  const normalized = normalizeTanzaniaPhone(value);
+  return /^255[67]\d{8}$/.test(normalized) ? normalized : "";
+}
 
 export default function PaymentModal({ reservation, onClose, onPaymentSuccess }) {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("MPESA");
   const [submitting, setSubmitting] = useState(false);
+  const [payment, setPayment] = useState(null);
+  const [status, setStatus] = useState("READY");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const pollRef = useRef(null);
 
   const prop = reservation?.property;
+  const normalizedPhone = useMemo(() => validateTanzaniaPhone(phoneNumber), [phoneNumber]);
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) window.clearInterval(pollRef.current);
+    };
+  }, []);
 
   if (!reservation) return null;
 
+  const stopPolling = () => {
+    if (pollRef.current) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+
+  const pollPaymentStatus = (paymentId) => {
+    stopPolling();
+    pollRef.current = window.setInterval(async () => {
+      try {
+        const res = await api.get(`/api/payment/verify/${paymentId}/`);
+        const latest = res.data;
+        setPayment(latest);
+
+        if (PAID_STATUSES.includes(latest.payment_status)) {
+          stopPolling();
+          setStatus("PAID");
+          setMessage("Payment confirmed. Your reservation is waiting for admin approval.");
+          if (onPaymentSuccess) onPaymentSuccess(latest);
+        } else if (FAILED_STATUSES.includes(latest.payment_status)) {
+          stopPolling();
+          setStatus("FAILED");
+          setError("Payment was not completed. You can retry with the same reservation.");
+        }
+      } catch (err) {
+        stopPolling();
+        setStatus("FAILED");
+        setError(err.response?.data?.error || "Could not check payment status.");
+      }
+    }, 5000);
+  };
+
   const handlePay = async (e) => {
     e.preventDefault();
-    if (!phoneNumber) {
-      Swal.fire("Required", "Please enter your mobile money phone number.", "warning");
+    stopPolling();
+    setError("");
+
+    if (!normalizedPhone) {
+      setError("Enter a valid Tanzanian mobile number, for example 0712345678.");
       return;
     }
 
     setSubmitting(true);
+    setStatus("INITIATING");
+    setMessage("Sending payment request to your phone...");
+
     try {
       const res = await api.post("/api/payment/initiate/", {
         reservation_id: reservation.id,
         payment_method: paymentMethod,
-        phone_number: phoneNumber,
+        phone_number: normalizedPhone,
         amount: reservation.total_amount,
       });
 
-      await Swal.fire({
-        title: "Payment Initiated",
-        html: `<strong>${res.data.message}</strong><br/><br/><span style="color:var(--gray-500);font-size:0.9rem;">(This is a mock UI flow. Payment recorded successfully in the system.)</span>`,
-        icon: "info",
-        confirmButtonColor: "#2563eb",
-      });
-
-      if (onPaymentSuccess) {
-        onPaymentSuccess(res.data.payment);
-      }
-    } catch (err) {
-      Swal.fire(
-        "Error",
-        err.response?.data?.error || "Failed to initiate payment.",
-        "error"
+      setPayment(res.data.payment);
+      setStatus("WAITING");
+      setMessage(
+        "Payment prompt sent to your phone. Enter your mobile-money PIN to complete the payment."
       );
+      pollPaymentStatus(res.data.payment.id);
+    } catch (err) {
+      setStatus("FAILED");
+      setError(err.response?.data?.error || "Failed to initiate payment.");
     } finally {
       setSubmitting(false);
     }
   };
 
+  const canRetry = status === "FAILED" || status === "WAITING";
+
   return (
-    <div style={overlayStyle}>
+    <div style={overlayStyle} role="dialog" aria-modal="true" aria-label="Complete payment">
       <div style={modalStyle}>
-        <button style={closeBtnStyle} onClick={onClose}>
-          ✕
+        <button style={closeBtnStyle} onClick={onClose} aria-label="Close payment modal">
+          ×
         </button>
 
-        <h2 style={titleStyle}>Complete Payment</h2>
-        <p style={subtitleStyle}>Secure your reservation for {prop?.title}</p>
+        <div style={headerStyle}>
+          <div>
+            <h2 style={titleStyle}>Complete Payment</h2>
+            <p style={subtitleStyle}>Secure your reservation for {prop?.title}</p>
+          </div>
+          <div style={statusBadgeStyle(status)}>{statusLabel(status)}</div>
+        </div>
 
-        {/* Summary Card */}
         <div style={summaryCardStyle}>
           <div style={summaryGrid}>
-            <SummaryItem label="Property Name" value={prop?.title} />
+            <SummaryItem label="Property" value={prop?.title} />
+            <SummaryItem label="Location" value={prop?.location} />
             <SummaryItem label="Monthly Rent" value={fmtMoney(reservation.monthly_price)} />
-            <SummaryItem label="Duration" value={`${reservation.total_months} Month(s)`} />
+            <SummaryItem label="Duration" value={`${reservation.total_months} month(s)`} />
             <SummaryItem label="Start Date" value={fmt(reservation.start_date)} />
             <SummaryItem label="End Date" value={fmt(reservation.end_date)} />
           </div>
           <div style={totalDivider} />
           <div style={totalRow}>
-            <span style={totalLabel}>Total Amount to Pay</span>
+            <span style={totalLabel}>Amount to Pay</span>
             <span style={totalValue}>{fmtMoney(reservation.total_amount)}</span>
           </div>
         </div>
 
-        {/* Payment Form */}
-        <form onSubmit={handlePay} style={formStyle}>
-          <div style={fieldGroupStyle}>
-            <label style={labelStyle}>Select Payment Method</label>
-            <div style={methodsGrid}>
-              {PAYMENT_METHODS.map((method) => (
-                <div
-                  key={method.id}
-                  style={methodItemStyle(paymentMethod === method.id, method.color)}
-                  onClick={() => setPaymentMethod(method.id)}
-                >
-                  <span style={{ fontSize: "1.2rem" }}>{method.icon}</span>
-                  <span style={methodNameStyle}>{method.name}</span>
-                  {paymentMethod === method.id && (
-                    <span style={{ marginLeft: "auto", color: method.color }}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="20 6 9 17 4 12"></polyline>
-                      </svg>
-                    </span>
-                  )}
-                </div>
-              ))}
+        {(message || error) && (
+          <div style={noticeStyle(error ? "error" : status === "PAID" ? "success" : "info")}>
+            <strong>{error ? "Payment update" : statusLabel(status)}</strong>
+            <span>{error || message}</span>
+
+          </div>
+        )}
+
+        {status !== "PAID" && (
+          <form onSubmit={handlePay} style={formStyle}>
+            <div style={fieldGroupStyle}>
+              <label style={labelStyle}>Mobile-money method</label>
+              <div style={methodsGrid}>
+                {PAYMENT_METHODS.map((method) => (
+                  <button
+                    type="button"
+                    key={method.id}
+                    style={methodItemStyle(paymentMethod === method.id, method.tone)}
+                    onClick={() => setPaymentMethod(method.id)}
+                    disabled={submitting}
+                  >
+                    <span style={methodDotStyle(method.tone)} />
+                    <span style={methodNameStyle}>{method.name}</span>
+                    {paymentMethod === method.id && <span style={checkStyle}>✓</span>}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
 
-          <div style={fieldGroupStyle}>
-            <label style={labelStyle}>Mobile Money Phone Number</label>
-            <input
-              type="tel"
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
-              placeholder="e.g. 0700 000 000"
-              style={inputStyle}
-              required
-            />
-          </div>
+            <div style={fieldGroupStyle}>
+              <label style={labelStyle}>Tanzanian mobile number</label>
+              <input
+                type="tel"
+                value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value)}
+                placeholder="0712345678"
+                style={inputStyle(Boolean(phoneNumber) && !normalizedPhone)}
+                disabled={submitting}
+                required
+              />
+              <small style={hintStyle}>
+                Accepted formats include 0712345678, +255712345678, 255712345678, or 712345678.
+              </small>
+            </div>
 
-          <button type="submit" disabled={submitting} style={payBtnStyle(submitting)}>
-            {submitting ? "Processing..." : `Pay ${fmtMoney(reservation.total_amount)}`}
-          </button>
-        </form>
+            <button type="submit" disabled={submitting || status === "INITIATING"} style={payBtnStyle(submitting || status === "INITIATING")}>
+              {submitting ? "Initiating..." : canRetry ? "Retry Payment" : `Pay ${fmtMoney(reservation.total_amount)}`}
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );
@@ -145,61 +220,73 @@ function SummaryItem({ label, value }) {
   return (
     <div style={summaryItemStyle}>
       <span style={summaryItemLabel}>{label}</span>
-      <span style={summaryItemValue}>{value}</span>
+      <span style={summaryItemValue}>{value || "N/A"}</span>
     </div>
   );
 }
 
-// --- Styles ---
+function statusLabel(status) {
+  const labels = {
+    READY: "Ready",
+    INITIATING: "Initiating",
+    WAITING: "Waiting for confirmation",
+    PAID: "Payment confirmed",
+    FAILED: "Retry available",
+  };
+  return labels[status] || "Ready";
+}
+
 const overlayStyle = {
   position: "fixed",
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
-  backgroundColor: "rgba(17, 24, 39, 0.7)",
+  inset: 0,
+  backgroundColor: "rgba(15, 23, 42, 0.72)",
   backdropFilter: "blur(4px)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  zIndex: 1000,
+  zIndex: 20000,
   padding: "20px",
 };
 
 const modalStyle = {
   background: "#ffffff",
-  borderRadius: "20px",
+  borderRadius: "14px",
   width: "100%",
-  maxWidth: "500px",
-  padding: "28px",
-  boxShadow: "0 20px 40px rgba(0,0,0,0.2)",
+  maxWidth: "560px",
+  padding: "24px",
+  boxShadow: "0 24px 50px rgba(0,0,0,0.22)",
   position: "relative",
-  animation: "fadeInUp 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
-  maxHeight: "90vh",
+  zIndex: 20001,
+  maxHeight: "92vh",
   overflowY: "auto",
 };
 
 const closeBtnStyle = {
   position: "absolute",
-  top: "20px",
-  right: "20px",
+  top: "16px",
+  right: "16px",
   background: "#f3f4f6",
   border: "none",
   width: "32px",
   height: "32px",
   borderRadius: "50%",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  fontSize: "14px",
+  fontSize: "20px",
   color: "#4b5563",
   cursor: "pointer",
-  transition: "all 0.2s",
+};
+
+const headerStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "flex-start",
+  gap: "16px",
+  marginRight: "36px",
+  marginBottom: "20px",
 };
 
 const titleStyle = {
   fontFamily: "var(--font-display)",
-  fontSize: "1.4rem",
+  fontSize: "1.35rem",
   fontWeight: 800,
   color: "#111827",
   margin: "0 0 4px",
@@ -208,128 +295,115 @@ const titleStyle = {
 const subtitleStyle = {
   fontSize: "0.9rem",
   color: "#6b7280",
-  margin: "0 0 24px",
+  margin: 0,
+};
+
+const statusBadgeStyle = (status) => {
+  const colors = {
+    READY: ["#f3f4f6", "#374151", "#d1d5db"],
+    INITIATING: ["#eff6ff", "#1d4ed8", "#bfdbfe"],
+    WAITING: ["#fff7ed", "#c2410c", "#fed7aa"],
+    PAID: ["#dcfce7", "#166534", "#bbf7d0"],
+    FAILED: ["#fee2e2", "#991b1b", "#fecaca"],
+  }[status] || ["#f3f4f6", "#374151", "#d1d5db"];
+  return {
+    flexShrink: 0,
+    padding: "6px 10px",
+    borderRadius: "999px",
+    background: colors[0],
+    color: colors[1],
+    border: `1px solid ${colors[2]}`,
+    fontSize: "0.72rem",
+    fontWeight: 800,
+    textTransform: "uppercase",
+  };
 };
 
 const summaryCardStyle = {
-  background: "linear-gradient(135deg, #f8fafc, #f1f5f9)",
-  borderRadius: "16px",
-  padding: "20px",
+  background: "#f8fafc",
+  borderRadius: "10px",
+  padding: "18px",
   border: "1px solid #e2e8f0",
-  marginBottom: "24px",
+  marginBottom: "18px",
 };
 
-const summaryGrid = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "10px",
+const summaryGrid = { display: "flex", flexDirection: "column", gap: "10px" };
+const summaryItemStyle = { display: "flex", justifyContent: "space-between", gap: "16px" };
+const summaryItemLabel = { fontSize: "0.84rem", color: "#64748b", fontWeight: 600 };
+const summaryItemValue = { fontSize: "0.9rem", color: "#1e293b", fontWeight: 800, textAlign: "right" };
+const totalDivider = { height: "1px", background: "#cbd5e1", margin: "14px 0" };
+const totalRow = { display: "flex", justifyContent: "space-between", alignItems: "center" };
+const totalLabel = { fontSize: "1rem", fontWeight: 800, color: "#0f172a" };
+const totalValue = { fontSize: "1.25rem", fontWeight: 900, color: "#2563eb" };
+
+const noticeStyle = (type) => {
+  const palette = {
+    info: ["#eff6ff", "#1e40af", "#bfdbfe"],
+    success: ["#ecfdf5", "#166534", "#bbf7d0"],
+    error: ["#fef2f2", "#991b1b", "#fecaca"],
+  }[type];
+  return {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    padding: "12px 14px",
+    borderRadius: "10px",
+    background: palette[0],
+    color: palette[1],
+    border: `1px solid ${palette[2]}`,
+    fontSize: "0.9rem",
+    marginBottom: "18px",
+  };
 };
 
-const summaryItemStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-};
+const referenceStyle = { color: "inherit", opacity: 0.8, overflowWrap: "anywhere" };
+const formStyle = { display: "flex", flexDirection: "column", gap: "18px" };
+const fieldGroupStyle = { display: "flex", flexDirection: "column", gap: "8px" };
+const labelStyle = { fontSize: "0.85rem", fontWeight: 800, color: "#374151" };
 
-const summaryItemLabel = {
-  fontSize: "0.85rem",
-  color: "#64748b",
-  fontWeight: 500,
-};
-
-const summaryItemValue = {
-  fontSize: "0.9rem",
-  color: "#1e293b",
-  fontWeight: 700,
-  textAlign: "right",
-};
-
-const totalDivider = {
-  height: "1px",
-  background: "#cbd5e1",
-  margin: "14px 0",
-};
-
-const totalRow = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-};
-
-const totalLabel = {
-  fontSize: "1rem",
-  fontWeight: 800,
-  color: "#0f172a",
-};
-
-const totalValue = {
-  fontSize: "1.3rem",
-  fontWeight: 900,
-  color: "#2563eb",
-};
-
-const formStyle = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "20px",
-};
-
-const fieldGroupStyle = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "8px",
-};
-
-const labelStyle = {
-  fontSize: "0.85rem",
-  fontWeight: 700,
-  color: "#374151",
-};
-
-const inputStyle = {
-  padding: "12px 16px",
-  border: "1.5px solid #d1d5db",
-  borderRadius: "12px",
+const inputStyle = (invalid) => ({
+  padding: "12px 14px",
+  border: `1.5px solid ${invalid ? "#ef4444" : "#d1d5db"}`,
+  borderRadius: "10px",
   fontSize: "1rem",
   color: "#1f2937",
   outline: "none",
-  transition: "border-color 0.2s",
-};
+});
 
-const methodsGrid = {
-  display: "grid",
-  gridTemplateColumns: "1fr 1fr",
-  gap: "12px",
-};
+const hintStyle = { color: "#64748b", fontSize: "0.78rem", lineHeight: 1.4 };
+const methodsGrid = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" };
 
 const methodItemStyle = (active, color) => ({
   display: "flex",
   alignItems: "center",
   gap: "10px",
   padding: "12px",
-  borderRadius: "12px",
-  border: active ? `2px solid ${color}` : "2px solid #e5e7eb",
-  background: active ? `${color}10` : "#fff",
+  borderRadius: "10px",
+  border: active ? `2px solid ${color}` : "1.5px solid #e5e7eb",
+  background: active ? `${color}12` : "#fff",
   cursor: "pointer",
-  transition: "all 0.2s",
+  textAlign: "left",
 });
 
-const methodNameStyle = {
-  fontSize: "0.9rem",
-  fontWeight: 700,
-  color: "#1f2937",
-};
+const methodDotStyle = (color) => ({
+  width: "12px",
+  height: "12px",
+  borderRadius: "999px",
+  background: color,
+});
+
+const methodNameStyle = { fontSize: "0.9rem", fontWeight: 800, color: "#1f2937" };
+const checkStyle = { marginLeft: "auto", color: "#059669", fontWeight: 900 };
 
 const payBtnStyle = (disabled) => ({
-  marginTop: "10px",
-  padding: "16px",
+  marginTop: "4px",
+  padding: "14px",
   background: disabled ? "#9ca3af" : "linear-gradient(135deg, #10b981, #059669)",
   color: "#fff",
   border: "none",
-  borderRadius: "12px",
-  fontSize: "1.05rem",
-  fontWeight: 800,
+  borderRadius: "10px",
+  fontSize: "1rem",
+  fontWeight: 900,
   cursor: disabled ? "not-allowed" : "pointer",
-  boxShadow: disabled ? "none" : "0 8px 20px rgba(16,185,129,0.3)",
-  transition: "all 0.2s",
+  boxShadow: disabled ? "none" : "0 8px 18px rgba(16,185,129,0.25)",
 });

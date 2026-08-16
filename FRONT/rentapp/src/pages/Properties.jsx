@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import MainLayout from "../layout/MainLayout";
 import api from "../services/authService";
 import Swal from "sweetalert2";
@@ -19,7 +19,10 @@ function Properties() {
   const [savedProperties, setSavedProperties] = useState([]);
   const [selectedProperty, setSelectedProperty] = useState(null);
   const [showVirtualTour, setShowVirtualTour] = useState(false);
+  const [tourPropertyId, setTourPropertyId] = useState(null);
   const [selectedReservationForPayment, setSelectedReservationForPayment] = useState(null);
+  // Tracks which property IDs have already had their visit recorded this session
+  const visitedRef = useRef(new Set());
 
   useEffect(() => {
     fetchProperties();
@@ -33,14 +36,19 @@ function Properties() {
     if (selectedProperty) {
       document.addEventListener("keydown", handleEsc);
       document.body.style.overflow = "hidden";
-      // Record the customer's visit to this property
-      recordVisit(selectedProperty.id);
+      // Only record the visit once per property per session to avoid an
+      // infinite loop: recordVisit called setSelectedProperty which
+      // re-triggered this effect which called recordVisit again.
+      if (!visitedRef.current.has(selectedProperty.id)) {
+        visitedRef.current.add(selectedProperty.id);
+        recordVisit(selectedProperty.id);
+      }
     }
     return () => {
       document.removeEventListener("keydown", handleEsc);
       document.body.style.overflow = "";
     };
-  }, [selectedProperty, closeModal]);
+  }, [selectedProperty, closeModal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const savePreferences = () => {
@@ -91,16 +99,16 @@ function Properties() {
   const recordVisit = async (propertyId) => {
     try {
       const response = await api.post(`/api/property/${propertyId}/record-visit/`);
+      // Update the count in the properties list only — do NOT call
+      // setSelectedProperty here, as that would re-trigger the useEffect
+      // above and cause an infinite POST loop.
       setProperties((prev) =>
         prev.map((p) =>
           p.id === propertyId ? { ...p, unique_review_count: response.data.count } : p
         )
       );
-      setSelectedProperty((prev) =>
-        prev && prev.id === propertyId ? { ...prev, unique_review_count: response.data.count } : prev
-      );
     } catch (err) {
-      // Silently fail - visit recording is non-critical
+      // Silently fail — visit recording is non-critical
       console.error("Error recording visit:", err);
     }
   };
@@ -483,7 +491,17 @@ function Properties() {
               {/* Action Buttons */}
               <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "24px" }}>
                 {selectedProperty.has_virtual_tour && (
-                  <button onClick={() => setShowVirtualTour(true)} className="btn-tour" style={modalVirtualTourBtnStyle}>
+                  <button
+                    onClick={() => {
+                      // Save the property ID before closing the modal,
+                      // since closeModal() clears selectedProperty.
+                      setTourPropertyId(selectedProperty.id);
+                      closeModal();
+                      setShowVirtualTour(true);
+                    }}
+                    className="btn-tour"
+                    style={modalVirtualTourBtnStyle}
+                  >
                     <span className="icon">🎮</span> Start Virtual Tour
                   </button>
                 )}
@@ -518,6 +536,7 @@ function Properties() {
                       prev ? { ...prev, status: "Reserved", is_available: false } : prev
                     );
                     fetchProperties();
+                    closeModal();
                     setSelectedReservationForPayment(reservation);
                   }}
                 />
@@ -553,10 +572,10 @@ function Properties() {
         </div>
       )}
 
-      {showVirtualTour && selectedProperty && (
-        <VirtualTourViewer 
-          propertyId={selectedProperty.id} 
-          onClose={() => setShowVirtualTour(false)} 
+      {showVirtualTour && tourPropertyId && (
+        <VirtualTourViewer
+          propertyId={tourPropertyId}
+          onClose={() => { setShowVirtualTour(false); setTourPropertyId(null); }}
         />
       )}
 

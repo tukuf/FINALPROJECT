@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
 from datetime import timedelta
 from pathlib import Path
 
@@ -24,6 +25,20 @@ REST_FRAMEWORK = {
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def load_local_env(path):
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+load_local_env(BASE_DIR / ".env")
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
@@ -33,7 +48,11 @@ SECRET_KEY = "django-insecure-w_%^d+f6=wpq%)kzw(*b$pa6dy3@j9zz=&mcv-nb=)gw+97k#1
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    "localhost",
+    "127.0.0.1",
+    "cattail-enjoyable-photo.ngrok-free.dev",
+]   
 
 
 # Application definition
@@ -52,6 +71,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # Must be first: injects CORS headers on /media/ files so Marzipano WebGL
+    # can load 360° panorama images without a tainted-canvas browser error.
+    "rentproject.middleware.MediaCorsMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -135,3 +157,4 @@ STATIC_URL = "static/"
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+

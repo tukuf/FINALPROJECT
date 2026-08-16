@@ -68,7 +68,7 @@ const VirtualTourViewer = ({ propertyId, onClose }) => {
     };
   }, [propertyId]);
 
-  // ── 2. Build Marzipano scenes (lightweight – no image decoding yet) ────────
+  // ── 2. Build Marzipano scenes once we know image dimensions ───────────────
   useEffect(() => {
     if (!tourData || !panoRef.current) return;
 
@@ -85,81 +85,99 @@ const VirtualTourViewer = ({ propertyId, onClose }) => {
     });
     viewerRef.current = viewer;
 
-    // Shared geometry & view settings
-    const geometry = new Marzipano.EquirectGeometry([{ width: 4096 }]);
-    const limiter  = Marzipano.RectilinearView.limit.traditional(
-      4096,
-      120 * Math.PI / 180
-    );
-
     const rooms = tourData.rooms;
     const newScenes = {};
 
-    rooms.forEach(room => {
-      // Prefer the absolute image_url provided by the serializer
-      const imageUrl = room.image_url || room.image;
-      if (!imageUrl) return;
+    // Pre-detect image widths so geometry is correct, then build scenes
+    const buildScenes = async () => {
+      for (const room of rooms) {
+        const imageUrl = room.image_url || room.image;
+        if (!imageUrl) continue;
 
-      const view   = new Marzipano.RectilinearView(
-        { pitch: 0, yaw: 0, fov: Math.PI / 2 },
-        limiter
-      );
-      // Marzipano fetches this URL lazily when the scene becomes active
-      const source = Marzipano.ImageUrlSource.fromString(imageUrl);
-      const scene  = viewer.createScene({ source, geometry, view, pinFirstLevel: false });
+        // Probe the actual pixel width of the equirectangular image.
+        // Without this, Marzipano's geometry tile misaligns and renders black.
+        let imgWidth = 4096; // safe fallback
+        try {
+          await new Promise((resolve) => {
+            const probe = new Image();
+            probe.crossOrigin = 'anonymous';
+            probe.onload = () => { imgWidth = probe.naturalWidth || 4096; resolve(); };
+            probe.onerror = () => {
+              console.error('VirtualTour: failed to probe image', imageUrl);
+              resolve(); // use fallback width
+            };
+            probe.src = imageUrl;
+          });
+        } catch (_) { /* use fallback */ }
 
-      newScenes[room.id] = { scene, data: room };
-    });
+        const geometry = new Marzipano.EquirectGeometry([{ width: imgWidth }]);
+        const limiter  = Marzipano.RectilinearView.limit.traditional(
+          imgWidth,
+          110 * Math.PI / 180   // max 110° FOV
+        );
+        const view = new Marzipano.RectilinearView(
+          { pitch: 0, yaw: 0, fov: Math.PI / 2 },   // 90° initial FOV
+          limiter
+        );
 
-    // Attach hotspot DOM elements
-    rooms.forEach(room => {
-      const entry = newScenes[room.id];
-      if (!entry || !room.hotspots || room.hotspots.length === 0) return;
+        const source = Marzipano.ImageUrlSource.fromString(imageUrl);
+        const scene  = viewer.createScene({ source, geometry, view, pinFirstLevel: false });
 
-      room.hotspots.forEach(hotspot => {
-        const el = document.createElement('div');
-        el.className = 'tour-hotspot';
+        newScenes[room.id] = { scene, data: room };
+      }
 
-        const icon = document.createElement('div');
-        icon.className = 'tour-hotspot-icon';
-        icon.innerHTML = `
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"/>
-            <polyline points="12 8 12 12 14 14"/>
-          </svg>`;
+      // Attach hotspot DOM elements
+      rooms.forEach(room => {
+        const entry = newScenes[room.id];
+        if (!entry || !room.hotspots || room.hotspots.length === 0) return;
 
-        const label = document.createElement('div');
-        label.className = 'tour-hotspot-title';
-        label.innerText = hotspot.title;
+        room.hotspots.forEach(hotspot => {
+          const el = document.createElement('div');
+          el.className = 'tour-hotspot';
 
-        el.appendChild(icon);
-        el.appendChild(label);
+          const icon = document.createElement('div');
+          icon.className = 'tour-hotspot-icon';
+          icon.innerHTML = `
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 8 12 12 14 14"/>
+            </svg>`;
 
-        const pitchRad = ((hotspot.pitch || 0) * Math.PI) / 180;
-        const yawRad   = ((hotspot.yaw   || 0) * Math.PI) / 180;
+          const label = document.createElement('div');
+          label.className = 'tour-hotspot-title';
+          label.innerText = hotspot.title;
 
-        // Listener is added immediately so it works even when scene switches
-        el.addEventListener('click', () => switchToRoom(hotspot.target_room_id));
+          el.appendChild(icon);
+          el.appendChild(label);
 
-        entry.scene
-          .hotspotContainer()
-          .createHotspot(el, { pitch: pitchRad, yaw: yawRad });
+          const pitchRad = ((hotspot.pitch || 0) * Math.PI) / 180;
+          const yawRad   = ((hotspot.yaw   || 0) * Math.PI) / 180;
+
+          el.addEventListener('click', () => switchToRoom(hotspot.target_room_id));
+
+          entry.scene
+            .hotspotContainer()
+            .createHotspot(el, { pitch: pitchRad, yaw: yawRad });
+        });
       });
-    });
 
-    scenesMapRef.current = newScenes;
-    setRoomList(rooms);
+      scenesMapRef.current = newScenes;
+      setRoomList(rooms);
 
-    // Switch to initial room
-    const initialId = tourData.initial_room_id || rooms[0]?.id;
-    const first     = newScenes[initialId] || Object.values(newScenes)[0];
-    if (first) {
-      first.scene.switchTo({ transitionDuration: 600 });
-      setCurrentRoom(first.data.room_name);
-    }
+      // Switch to initial room
+      const initialId = tourData.initial_room_id || rooms[0]?.id;
+      const first     = newScenes[initialId] || Object.values(newScenes)[0];
+      if (first) {
+        first.scene.switchTo({ transitionDuration: 600 });
+        setCurrentRoom(first.data.room_name);
+      }
 
-    setLoading(false);
+      setLoading(false);
+    };
+
+    buildScenes();
   }, [tourData]);   // eslint-disable-line react-hooks/exhaustive-deps
+
 
   // ── 3. (Removed: Hotspot click events are now wired during creation) ────────
 

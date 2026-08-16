@@ -67,11 +67,19 @@ function ReservationCard({ reservation, onCancelled, onPayNow }) {
   const statusConfig = {
     RESERVED: { bg: "#fef3c7", color: "#92400e", border: "#fde68a", label: "🏷️ Reserved" },
     PENDING_PAYMENT: { bg: "#eff6ff", color: "#1e40af", border: "#bfdbfe", label: "💳 Pending Payment" },
+    PAYMENT_PROCESSING: { bg: "#fff7ed", color: "#c2410c", border: "#fed7aa", label: "⏳ Waiting for Payment" },
+    PENDING_APPROVAL: { bg: "#dcfce7", color: "#166534", border: "#bbf7d0", label: "✅ Paid - Pending Approval" },
     EXPIRED: { bg: "#fee2e2", color: "#7f1d1d", border: "#fecaca", label: "⏰ Expired" },
     CANCELLED: { bg: "#f3f4f6", color: "#374151", border: "#d1d5db", label: "❌ Cancelled" },
   };
 
   const sc = statusConfig[reservation.reservation_status] || statusConfig.RESERVED;
+  const canPay = ["RESERVED", "PENDING_PAYMENT", "PAYMENT_PROCESSING"].includes(
+    reservation.reservation_status
+  );
+  const canCancel = ["RESERVED", "PENDING_PAYMENT"].includes(
+    reservation.reservation_status
+  );
 
   return (
     <div style={cardWrap}>
@@ -106,7 +114,7 @@ function ReservationCard({ reservation, onCancelled, onPayNow }) {
         </div>
 
         {/* Countdown / Expiry info */}
-        {reservation.reservation_status === "RESERVED" && (
+        {canPay && (
           <div style={timerBox}>
             <div style={{ fontSize: "0.78rem", color: "#374151", fontWeight: 600, marginBottom: 8, textAlign: "center" }}>
               ⏳ Reservation expires in
@@ -125,7 +133,7 @@ function ReservationCard({ reservation, onCancelled, onPayNow }) {
 
         {/* CTA buttons */}
         <div style={btnRow}>
-          {reservation.reservation_status === "RESERVED" && (
+          {canPay && (
             <>
               <button
                 style={payNowBtn}
@@ -133,11 +141,15 @@ function ReservationCard({ reservation, onCancelled, onPayNow }) {
                   if (onPayNow) onPayNow(reservation);
                 }}
               >
-                💳 Pay Now
+                {reservation.reservation_status === "PAYMENT_PROCESSING"
+                  ? "Check / Retry Payment"
+                  : "💳 Pay Now"}
               </button>
-              <button style={cancelBtn} onClick={handleCancel}>
-                ✕ Cancel
-              </button>
+              {canCancel && (
+                <button style={cancelBtn} onClick={handleCancel}>
+                  ✕ Cancel
+                </button>
+              )}
             </>
           )}
         </div>
@@ -270,7 +282,7 @@ function MyRentals() {
 
   // Filtered sets
   const activeReservations = reservations.filter(
-    (r) => r.reservation_status === "RESERVED"
+    (r) => ["RESERVED", "PENDING_PAYMENT", "PAYMENT_PROCESSING"].includes(r.reservation_status)
   );
   const historyReservations = reservations.filter((r) =>
     ["EXPIRED", "CANCELLED"].includes(r.reservation_status)
