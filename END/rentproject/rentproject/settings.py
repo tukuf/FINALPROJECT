@@ -158,3 +158,21 @@ STATIC_URL = "static/"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+CLICKPESA_CLIENT_ID = os.environ.get("CLICKPESA_CLIENT_ID", "")
+CLICKPESA_API_KEY = os.environ.get("CLICKPESA_API_KEY", "")
+CLICKPESA_CHECKSUM_SECRET = os.environ.get("CLICKPESA_CHECKSUM_SECRET", "")
+CLICKPESA_CURRENCY = os.environ.get("CLICKPESA_CURRENCY", "TZS")
+
+NGROK_PUBLIC_URL = os.getenv("NGROK_PUBLIC_URL")
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+}

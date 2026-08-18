@@ -15,13 +15,6 @@ const fmtMoney = (v) =>
     Number(v ?? 0)
   );
 
-const PAYMENT_METHODS = [
-  { id: "MPESA", name: "M-Pesa", tone: "#16a34a" },
-  { id: "AIRTEL", name: "Airtel Money", tone: "#dc2626" },
-  { id: "TIGO", name: "Tigo Pesa", tone: "#2563eb" },
-  { id: "HALOPESA", name: "HaloPesa", tone: "#ea580c" },
-];
-
 const PAID_STATUSES = ["SUCCESSFUL", "PAID", "COMPLETED"];
 const FAILED_STATUSES = ["FAILED", "REJECTED", "CANCELLED", "TIMEOUT"];
 
@@ -40,13 +33,13 @@ function validateTanzaniaPhone(value) {
 
 export default function PaymentModal({ reservation, onClose, onPaymentSuccess }) {
   const [phoneNumber, setPhoneNumber] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState("MPESA");
   const [submitting, setSubmitting] = useState(false);
   const [payment, setPayment] = useState(null);
   const [status, setStatus] = useState("READY");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const pollRef = useRef(null);
+  const closeTimerRef = useRef(null);
 
   const prop = reservation?.property;
   const normalizedPhone = useMemo(() => validateTanzaniaPhone(phoneNumber), [phoneNumber]);
@@ -54,6 +47,7 @@ export default function PaymentModal({ reservation, onClose, onPaymentSuccess })
   useEffect(() => {
     return () => {
       if (pollRef.current) window.clearInterval(pollRef.current);
+      if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
     };
   }, []);
 
@@ -68,7 +62,10 @@ export default function PaymentModal({ reservation, onClose, onPaymentSuccess })
 
   const pollPaymentStatus = (paymentId) => {
     stopPolling();
+    let isPolling = false;  // guard against overlapping requests
     pollRef.current = window.setInterval(async () => {
+      if (isPolling) return;
+      isPolling = true;
       try {
         const res = await api.get(`/api/payment/verify/${paymentId}/`);
         const latest = res.data;
@@ -77,8 +74,11 @@ export default function PaymentModal({ reservation, onClose, onPaymentSuccess })
         if (PAID_STATUSES.includes(latest.payment_status)) {
           stopPolling();
           setStatus("PAID");
-          setMessage("Payment confirmed. Your reservation is waiting for admin approval.");
+          setMessage("house already occupied, and the payment successful");
           if (onPaymentSuccess) onPaymentSuccess(latest);
+          closeTimerRef.current = window.setTimeout(() => {
+            if (onClose) onClose();
+          }, 2500);
         } else if (FAILED_STATUSES.includes(latest.payment_status)) {
           stopPolling();
           setStatus("FAILED");
@@ -88,9 +88,12 @@ export default function PaymentModal({ reservation, onClose, onPaymentSuccess })
         stopPolling();
         setStatus("FAILED");
         setError(err.response?.data?.error || "Could not check payment status.");
+      } finally {
+        isPolling = false;
       }
-    }, 5000);
+    }, 8000);
   };
+
 
   const handlePay = async (e) => {
     e.preventDefault();
@@ -109,7 +112,7 @@ export default function PaymentModal({ reservation, onClose, onPaymentSuccess })
     try {
       const res = await api.post("/api/payment/initiate/", {
         reservation_id: reservation.id,
-        payment_method: paymentMethod,
+        payment_method: "MOBILE_MONEY",
         phone_number: normalizedPhone,
         amount: reservation.total_amount,
       });
@@ -145,71 +148,70 @@ export default function PaymentModal({ reservation, onClose, onPaymentSuccess })
           <div style={statusBadgeStyle(status)}>{statusLabel(status)}</div>
         </div>
 
-        <div style={summaryCardStyle}>
-          <div style={summaryGrid}>
-            <SummaryItem label="Property" value={prop?.title} />
-            <SummaryItem label="Location" value={prop?.location} />
-            <SummaryItem label="Monthly Rent" value={fmtMoney(reservation.monthly_price)} />
-            <SummaryItem label="Duration" value={`${reservation.total_months} month(s)`} />
-            <SummaryItem label="Start Date" value={fmt(reservation.start_date)} />
-            <SummaryItem label="End Date" value={fmt(reservation.end_date)} />
-          </div>
-          <div style={totalDivider} />
-          <div style={totalRow}>
-            <span style={totalLabel}>Amount to Pay</span>
-            <span style={totalValue}>{fmtMoney(reservation.total_amount)}</span>
-          </div>
-        </div>
-
-        {(message || error) && (
-          <div style={noticeStyle(error ? "error" : status === "PAID" ? "success" : "info")}>
-            <strong>{error ? "Payment update" : statusLabel(status)}</strong>
-            <span>{error || message}</span>
-
+        {/* ---- SUCCESS BANNER ---- */}
+        {status === "PAID" && (
+          <div style={successBannerStyle}>
+            <span style={successIconStyle}>&#x2705;</span>
+            <div>
+              <strong style={successTitleStyle}>Payment Successful!</strong>
+              <p style={successBodyStyle}>
+                Your payment of <strong>{fmtMoney(payment?.amount ?? reservation.total_amount)}</strong> has been received.
+                Your reservation for <strong>{prop?.title}</strong> is now pending admin approval.
+                You will be notified once it is confirmed.
+              </p>
+            </div>
+            <button style={closePaidBtnStyle} onClick={onClose}>Close</button>
           </div>
         )}
 
+        {/* ---- SUMMARY + FORM (only when not yet paid) ---- */}
         {status !== "PAID" && (
-          <form onSubmit={handlePay} style={formStyle}>
-            <div style={fieldGroupStyle}>
-              <label style={labelStyle}>Mobile-money method</label>
-              <div style={methodsGrid}>
-                {PAYMENT_METHODS.map((method) => (
-                  <button
-                    type="button"
-                    key={method.id}
-                    style={methodItemStyle(paymentMethod === method.id, method.tone)}
-                    onClick={() => setPaymentMethod(method.id)}
-                    disabled={submitting}
-                  >
-                    <span style={methodDotStyle(method.tone)} />
-                    <span style={methodNameStyle}>{method.name}</span>
-                    {paymentMethod === method.id && <span style={checkStyle}>✓</span>}
-                  </button>
-                ))}
+          <>
+            <div style={summaryCardStyle}>
+              <div style={summaryGrid}>
+                <SummaryItem label="Property" value={prop?.title} />
+                <SummaryItem label="Location" value={prop?.location} />
+                <SummaryItem label="Monthly Rent" value={fmtMoney(reservation.monthly_price)} />
+                <SummaryItem label="Duration" value={`${reservation.total_months} month(s)`} />
+                <SummaryItem label="Start Date" value={fmt(reservation.start_date)} />
+                <SummaryItem label="End Date" value={fmt(reservation.end_date)} />
+              </div>
+              <div style={totalDivider} />
+              <div style={totalRow}>
+                <span style={totalLabel}>Amount to Pay</span>
+                <span style={totalValue}>{fmtMoney(reservation.total_amount)}</span>
               </div>
             </div>
 
-            <div style={fieldGroupStyle}>
-              <label style={labelStyle}>Tanzanian mobile number</label>
-              <input
-                type="tel"
-                value={phoneNumber}
-                onChange={(e) => setPhoneNumber(e.target.value)}
-                placeholder="0712345678"
-                style={inputStyle(Boolean(phoneNumber) && !normalizedPhone)}
-                disabled={submitting}
-                required
-              />
-              <small style={hintStyle}>
-                Accepted formats include 0712345678, +255712345678, 255712345678, or 712345678.
-              </small>
-            </div>
+            {(message || error) && (
+              <div style={noticeStyle(error ? "error" : status === "PAID" ? "success" : "info")}>
+                <strong>{error ? "Payment update" : statusLabel(status)}</strong>
+                <span>{error || message}</span>
+              </div>
+            )}
 
-            <button type="submit" disabled={submitting || status === "INITIATING"} style={payBtnStyle(submitting || status === "INITIATING")}>
-              {submitting ? "Initiating..." : canRetry ? "Retry Payment" : `Pay ${fmtMoney(reservation.total_amount)}`}
-            </button>
-          </form>
+            <form onSubmit={handlePay} style={formStyle}>
+              <div style={fieldGroupStyle}>
+                <label style={labelStyle}>Tanzanian mobile number</label>
+                <input
+                  type="tel"
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  placeholder="0712345678"
+                  style={inputStyle(Boolean(phoneNumber) && !normalizedPhone)}
+                  disabled={submitting}
+                  required
+                />
+                <small style={hintStyle}>
+                  Accepted formats include 0712345678, +255712345678, 255712345678, or 712345678.
+                </small>
+              </div>
+
+              <button type="submit" disabled={submitting || status === "INITIATING"} style={payBtnStyle(submitting || status === "INITIATING")}>
+                {submitting ? "Initiating..." : canRetry ? "Retry Payment" : `Pay ${fmtMoney(reservation.total_amount)}`}
+              </button>
+            </form>
+          </>
         )}
       </div>
     </div>
@@ -371,29 +373,6 @@ const inputStyle = (invalid) => ({
 });
 
 const hintStyle = { color: "#64748b", fontSize: "0.78rem", lineHeight: 1.4 };
-const methodsGrid = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" };
-
-const methodItemStyle = (active, color) => ({
-  display: "flex",
-  alignItems: "center",
-  gap: "10px",
-  padding: "12px",
-  borderRadius: "10px",
-  border: active ? `2px solid ${color}` : "1.5px solid #e5e7eb",
-  background: active ? `${color}12` : "#fff",
-  cursor: "pointer",
-  textAlign: "left",
-});
-
-const methodDotStyle = (color) => ({
-  width: "12px",
-  height: "12px",
-  borderRadius: "999px",
-  background: color,
-});
-
-const methodNameStyle = { fontSize: "0.9rem", fontWeight: 800, color: "#1f2937" };
-const checkStyle = { marginLeft: "auto", color: "#059669", fontWeight: 900 };
 
 const payBtnStyle = (disabled) => ({
   marginTop: "4px",
@@ -407,3 +386,49 @@ const payBtnStyle = (disabled) => ({
   cursor: disabled ? "not-allowed" : "pointer",
   boxShadow: disabled ? "none" : "0 8px 18px rgba(16,185,129,0.25)",
 });
+
+const successBannerStyle = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  gap: "16px",
+  padding: "28px 20px",
+  borderRadius: "12px",
+  background: "linear-gradient(135deg, #ecfdf5, #d1fae5)",
+  border: "2px solid #6ee7b7",
+  textAlign: "center",
+};
+
+const successIconStyle = {
+  fontSize: "3rem",
+  lineHeight: 1,
+};
+
+const successTitleStyle = {
+  fontSize: "1.3rem",
+  fontWeight: 900,
+  color: "#065f46",
+  display: "block",
+  marginBottom: "8px",
+};
+
+const successBodyStyle = {
+  fontSize: "0.9rem",
+  color: "#047857",
+  lineHeight: 1.6,
+  margin: 0,
+};
+
+const closePaidBtnStyle = {
+  marginTop: "8px",
+  padding: "12px 32px",
+  background: "#059669",
+  color: "#fff",
+  border: "none",
+  borderRadius: "10px",
+  fontSize: "1rem",
+  fontWeight: 800,
+  cursor: "pointer",
+  boxShadow: "0 4px 12px rgba(5,150,105,0.3)",
+};
+

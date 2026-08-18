@@ -177,6 +177,28 @@ function UploadProperty() {
     }
   };
 
+  const handleRemoveReservation = async (property) => {
+    const result = await Swal.fire({
+      title: "Remove Reservation?",
+      text: "This will cancel any active 24-hour reservation and make the house free immediately. Proceed?",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#10b981",
+      cancelButtonColor: "#d33",
+      confirmButtonText: "Yes, free the house!"
+    });
+    
+    if (result.isConfirmed) {
+      try {
+        await api.post(`/api/property/${property.id}/remove-reservation/`);
+        Swal.fire("Success", "Reservation removed. The house is now free.", "success");
+        fetchMyProperties();
+      } catch (err) {
+        Swal.fire("Error", err.response?.data?.error || "Failed to remove reservation.", "error");
+      }
+    }
+  };
+
   const getImageUrl = (imagePath) => {
     if (!imagePath) return "https://via.placeholder.com/50x50?text=No+Image";
     if (imagePath.startsWith("http")) return imagePath;
@@ -287,7 +309,10 @@ function UploadProperty() {
                         <td className="cell-price">${p.price}</td>
                         <td>
                           <div className="action-buttons">
-                            {(!p.is_available || p.status === "Occupied") && (
+                            {p.status === "Reserved" && (
+                              <button onClick={() => handleRemoveReservation(p)} className="btn-action btn-success">🔓 Remove Reserved</button>
+                            )}
+                            {(p.status === "Occupied" || (!p.is_available && p.status !== "Reserved")) && (
                               <button onClick={() => handleMakeAvailable(p)} className="btn-action btn-success">✅ Make Available</button>
                             )}
                             <button onClick={() => handleEdit(p)} className="btn-action btn-warning">✏️ Edit</button>

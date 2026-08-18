@@ -132,6 +132,7 @@ export default function ReservationPanel({ property, onReservationCreated, onRen
         property_id: property.id,
         start_date: startDate,
         end_date: endDate,
+        intent: "reserve",
       });
       Swal.fire({
         title: "🎉 Reserved!",
@@ -276,6 +277,7 @@ export default function ReservationPanel({ property, onReservationCreated, onRen
               property_id: property.id,
               start_date: startDate,
               end_date: endDate,
+              intent: "pay",
             });
             if (onRentNow) onRentNow(res.data);
           } catch (err) {

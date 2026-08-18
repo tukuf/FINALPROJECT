@@ -249,7 +249,8 @@ function AdminContracts() {
     const doc = new jsPDF();
     const pw = doc.internal.pageSize.getWidth();
     const ph = doc.internal.pageSize.getHeight();
-    
+    const prop = contract.property;
+
     // Helper function for centered text
     const centerText = (text, y, fontSize, fontStyle = "normal", color = [0, 0, 0]) => {
       doc.setFontSize(fontSize);
@@ -258,143 +259,137 @@ function AdminContracts() {
       doc.text(text, pw / 2, y, { align: "center" });
     };
 
-    // Header Background
-    doc.setFillColor(31, 41, 55); // Dark Slate Gray
-    doc.rect(0, 0, pw, 35, "F");
+    // Draw borders (elegant double-line border)
+    doc.setDrawColor(200, 180, 140); // Gold-ish color for border
+    doc.setLineWidth(1.5);
+    doc.rect(8, 8, pw - 16, ph - 16);
+    doc.setLineWidth(0.5);
+    doc.rect(10, 10, pw - 20, ph - 20);
 
-    // "Logo" and Title
-    centerText("RentalHub", 16, 22, "bold", [255, 255, 255]);
-    centerText("RESIDENTIAL LEASE AGREEMENT", 26, 11, "bold", [200, 200, 200]);
+    // Title
+    centerText("HOUSE RENTAL AGREEMENT", 25, 20, "bold", [0, 0, 0]);
 
-    let y = 45;
-    const leftMargin = 15;
-    const rightMargin = pw - 15;
+    // Subtitle
+    const dateFormatted = new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase();
+    centerText(`THIS HOUSE RENTAL AGREEMENT IS MADE AND ENTERED INTO THIS ${dateFormatted}, BY AND BETWEEN:`, 35, 8, "normal", [60, 60, 60]);
+
+    // Top Header Boxes (Landlord & Tenant)
+    let y = 42;
+    doc.setDrawColor(200, 180, 140);
+    doc.setLineWidth(0.5);
+    doc.line(10, y, pw - 10, y);
     
-    // Contract Meta
+    // Vertical line for columns
+    doc.line(pw / 2, y, pw / 2, y + 25);
+    
+    // Landlord & Tenant Box content
+    const boxY = y + 5;
+    
+    // Landlord
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(0, 0, 0);
+    doc.text("LANDLORD", pw / 4, boxY, { align: "center" });
     doc.setFontSize(9);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(50, 50, 50);
-    doc.text(`Contract Reference: #${contract.id}`, leftMargin, y);
-    doc.text(`Execution Date: ${new Date().toLocaleDateString()}`, rightMargin - 45, y);
-    
-    y += 6;
-    doc.setDrawColor(200, 200, 200);
-    doc.line(leftMargin, y, rightMargin, y);
-    y += 6;
-
-    // Parties & Property Layout
-    const half = pw / 2;
-    doc.setFontSize(10);
-    
-    // Left Column (Parties)
-    doc.setFont("helvetica", "bold");
-    doc.text("1. PARTIES", leftMargin, y);
-    y += 5;
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(`Tenant (Customer): ${contract.user?.username || "N/A"}`, leftMargin, y);
-    y += 5;
-    doc.text(`Landlord (Owner/Admin): ${contract.property?.owner?.username || "RentalHub Administration"}`, leftMargin, y);
+    doc.text(`Name    : ${prop?.owner?.username || "RentalHub Admin"}`, 15, boxY + 8);
+    doc.text(`Address : ${prop?.owner?.address || "RentalHub Office"}`, 15, boxY + 13);
+    doc.text(`Phone   : ${prop?.owner?.phone || "N/A"}`, 15, boxY + 18);
 
-    // Right Column (Property Info)
-    let yProp = y - 10;
+    // Tenant
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("2. PROPERTY DETAILS", half, yProp);
-    yProp += 5;
-    doc.setFont("helvetica", "normal");
+    doc.setFontSize(11);
+    doc.text("TENANT", (pw / 4) * 3, boxY, { align: "center" });
     doc.setFontSize(9);
-    doc.text(`Title: ${contract.property?.title || "N/A"}`, half, yProp);
-    yProp += 5;
-    
-    const locLines = doc.splitTextToSize(`Location: ${contract.property?.location || "N/A"}`, half - 15);
-    doc.text(locLines, half, yProp);
-    yProp += locLines.length * 5;
-    
-    doc.setFont("helvetica", "italic");
-    const desc = doc.splitTextToSize(`Description: ${contract.property?.description || "N/A"}`, half - 15);
-    doc.text(desc, half, yProp);
-    yProp += desc.length * 5;
-    
-    if (contract.property?.has_virtual_tour) {
-      doc.text(`Virtual Tour: Local tour configured`, half, yProp);
-    }
-    
-    y = Math.max(y + 8, yProp + 5);
-    
-    // Rental Period and Payment
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("3. RENTAL PERIOD & PAYMENT", leftMargin, y);
-    y += 5;
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(`Lease Term: ${contract.start_date || "N/A"} to ${contract.end_date || "N/A"}`, leftMargin, y);
-    doc.text(`Monthly Rate: $${parseFloat(contract.property?.price || 0).toFixed(2)}`, half, y);
-    y += 5;
-    doc.text(`Total Contract Value: $${parseFloat(contract.rent_amount || 0).toFixed(2)}`, leftMargin, y);
+    doc.text(`Name    : ${contract.user?.username || "N/A"}`, pw / 2 + 5, boxY + 8);
+    doc.text(`Address : ${contract.user?.address || "N/A"}`, pw / 2 + 5, boxY + 13);
+    doc.text(`Phone   : ${contract.user?.phone || "N/A"}`, pw / 2 + 5, boxY + 18);
+
+    y += 25;
+    doc.line(10, y, pw - 10, y);
     
-    y += 6;
-    doc.line(leftMargin, y, rightMargin, y);
     y += 8;
 
-    // Terms and Conditions
-    centerText("TERMS AND CONDITIONS", y, 11, "bold", [0, 0, 0]);
-    y += 7;
-
+    // Body Text Clauses
     doc.setFontSize(8.5);
+    doc.setTextColor(30, 30, 30);
     
     const termsList = [
-      { t: "Customer Responsibility:", d: "The customer agrees to maintain the property in good condition, respect the house rules, and use all facilities responsibly." },
-      { t: "Maintenance Responsibility:", d: "The customer is responsible for basic daily maintenance and must report damages or technical issues to the property owner/management promptly." },
-      { t: "Proper Usage Rules:", d: "The property must only be used for approved residential purposes. Illegal activities, unauthorized modifications, or misuse of facilities are not allowed." },
-      { t: "Damage and Repair Conditions:", d: "Any damage caused by negligence or misuse may require the customer to cover repair or replacement costs according to the agreement." },
-      { t: "Termination and Cancellation Conditions:", d: "The agreement may be terminated according to the rental terms, cancellation policy, or violation of contract conditions." },
-      { t: "Privacy and Security Rules:", d: "Both parties must protect personal information and respect the security and privacy of the property and occupants." },
-      { t: "Agreement and Acceptance:", d: "By accepting this contract, both parties confirm that they understand and agree to all stated terms and conditions." }
+      { t: "1. Property Description", d: `The Landlord hereby agrees to rent to the Tenant the residential property located at ${prop?.location || "N/A"}, including all fixtures, appliances, and furniture currently on the premises.` },
+      { t: "2. Term of Lease", d: `This rental agreement shall commence on ${contract.start_date || "N/A"}, and shall continue until ${contract.end_date || "N/A"}, unless otherwise terminated in accordance with the terms of this agreement.` },
+      { t: "3. Rental Payment", d: `The monthly rent shall be $${parseFloat(prop?.price || 0).toFixed(2)}, payable on the 1st day of each month. Payment shall be made via bank transfer to the Landlord's designated account.` },
+      { t: "4. Security Deposit", d: `The Tenant agrees to pay a security deposit prior to occupancy. The deposit shall cover damages beyond normal wear and tear, if any.` },
+      { t: "5. Use of Property", d: `The Tenant shall use the premises solely for residential purposes and shall not sublease or assign this agreement without written consent from the Landlord.` },
+      { t: "6. Maintenance and Repairs", d: `The Tenant shall keep the property clean and in good condition. The Landlord is responsible for major repairs unless damages are caused by the Tenant's negligence.` },
+      { t: "7. Termination", d: `Either party may terminate this agreement by providing a 30-day written notice. Upon termination, the Tenant agrees to return the property in its original condition, excluding normal wear and tear.` },
+      { t: "8. Governing Law", d: `This agreement shall be governed by and construed in accordance with the generally accepted principles of contract law in international jurisdictions.` },
+      { t: "9. Miscellaneous", d: `Any amendments to this agreement must be in writing and signed by both parties. This document constitutes the entire agreement between the Landlord and the Tenant.\n\nAdditional terms: ${contract.terms || "None"}` }
     ];
 
+    const leftMargin = 15;
     termsList.forEach(term => {
       doc.setFont("helvetica", "bold");
       doc.text(term.t, leftMargin, y);
+      y += 4;
       doc.setFont("helvetica", "normal");
-      const lines = doc.splitTextToSize(term.d, pw - leftMargin * 2);
-      doc.text(lines, leftMargin, y + 4);
-      y += (lines.length * 4) + 3;
+      const lines = doc.splitTextToSize(term.d, pw - 30);
+      doc.text(lines, leftMargin, y);
+      y += (lines.length * 4) + 4;
     });
 
-    // Final agreement statement and Signatures
-    y = ph - 55; // Align to bottom
-    doc.setDrawColor(200, 200, 200);
-    doc.line(leftMargin, y, rightMargin, y);
-    y += 5;
-    
+    // Signature Area
+    y = ph - 55;
     doc.setFont("helvetica", "italic");
-    doc.setFontSize(8.5);
-    const statement = "By signing below, both parties acknowledge that they have read, understood, and accept this entire agreement, including all terms and conditions stated above.";
-    const statementLines = doc.splitTextToSize(statement, pw - leftMargin * 2);
-    doc.text(statementLines, leftMargin, y);
+    doc.text(`Signed on this day, ${dateFormatted}.`, leftMargin, y);
     
-    y += 18;
-
-    doc.setFont("helvetica", "bold");
+    y += 10;
+    doc.setDrawColor(200, 180, 140);
+    doc.line(10, y, pw - 10, y);
+    
+    y += 15;
+    // Signatures
+    doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     
-    // Landlord Sig
-    doc.text("_____________________________________", leftMargin, y);
-    doc.text("Property Owner / Authorized Admin", leftMargin, y + 5);
-    doc.setFont("helvetica", "normal");
-    doc.text("Date: __________________", leftMargin, y + 10);
-    
-    // Tenant Sig
+    doc.text("_________________________", pw / 4, y, { align: "center" });
+    doc.text("Landlord Signature", pw / 4, y + 5, { align: "center" });
     doc.setFont("helvetica", "bold");
-    doc.text("_____________________________________", half + 10, y);
-    doc.text("Tenant (Customer)", half + 10, y + 5);
+    doc.text(prop?.owner?.username || "RentalHub Admin", pw / 4, y + 12, { align: "center" });
+    
     doc.setFont("helvetica", "normal");
-    doc.text("Date: __________________", half + 10, y + 10);
+    doc.text("_________________________", (pw / 4) * 3, y, { align: "center" });
+    doc.text("Tenant Signature", (pw / 4) * 3, y + 5, { align: "center" });
+    doc.setFont("helvetica", "bold");
+    doc.text(contract.user?.username || "Tenant", (pw / 4) * 3, y + 12, { align: "center" });
 
-    // Footer
-    centerText("This is an electronically generated document by RentalHub Management System. It serves as a legally binding contract.", ph - 8, 7, "italic", [150, 150, 150]);
+    // --- PAYMENT SUCCESS STAMP ---
+    const stampX = pw / 2;
+    const stampY = y - 5;
+    
+    doc.setDrawColor(34, 197, 94); // Green
+    doc.setLineWidth(0.8);
+    doc.circle(stampX, stampY, 20);
+    doc.setLineWidth(0.3);
+    doc.circle(stampX, stampY, 18);
+    
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(34, 197, 94);
+    
+    doc.setFontSize(7);
+    doc.text("RENTAL AGREEMENT", stampX, stampY - 5, { align: "center" });
+    
+    doc.setFontSize(9);
+    doc.text("PAID", stampX, stampY + 1, { align: "center" });
+    
+    doc.setFontSize(7);
+    doc.text("PAYMENT SUCCESSFUL", stampX, stampY + 7, { align: "center" });
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(6);
+    const payRef = contract.payment_reference || "N/A";
+    doc.text(`Ref: ${payRef}`, stampX, stampY + 12, { align: "center" });
+    // -----------------------------
 
     doc.save(`RentalHub_Contract_${contract.id}_${contract.user?.username || "Client"}.pdf`);
 

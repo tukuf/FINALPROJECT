@@ -163,6 +163,22 @@ class ContractSerializer(serializers.ModelSerializer):
         rep["property"] = PropertySerializer(
             instance.property, context=self.context
         ).data
+        
+        # Include payment reference if available
+        payment_ref = "N/A"
+        try:
+            from rentapp.models import Payment
+            payment = Payment.objects.filter(
+                reservation__property=instance.property,
+                reservation__customer=instance.user,
+                payment_status=Payment.STATUS_SUCCESSFUL
+            ).last()
+            if payment and payment.transaction_id:
+                payment_ref = payment.transaction_id
+        except Exception:
+            pass
+        rep["payment_reference"] = payment_ref
+        
         return rep
 
 

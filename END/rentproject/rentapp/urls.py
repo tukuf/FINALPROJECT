@@ -1,5 +1,6 @@
-from django.urls import path
+from django.urls import path, include
 from rest_framework.authtoken.views import obtain_auth_token
+from rentapp.views import payment_callback_handler   # <-- import the view
 
 from .views import *
 
@@ -14,6 +15,7 @@ urlpatterns = [
     path("property/<int:id>/", manage_property),
     path("property/<int:property_id>/rent/", rent_property),
     path("property/<int:property_id>/record-visit/", record_visit),
+    path("property/<int:property_id>/remove-reservation/", remove_property_reservation),
     # 📩 RENTAL REQUEST
     path("rental_request/", manage_rentalrequest),
     path("rental_request/<int:id>/", manage_rentalrequest),
@@ -41,4 +43,6 @@ urlpatterns = [
     path("payment/initiate/", initiate_mobile_payment),
     path("payment/verify/<int:payment_id>/", verify_payment_status),
     path("payment/callback/", payment_callback_handler),
+    # ClickPesa posts to this URL after the user enters their PIN
+    path("clickpesa/webhook/", payment_callback_handler, name="clickpesa-webhook"),
 ]

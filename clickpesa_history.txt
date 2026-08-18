@@ -1,0 +1,1498 @@
+commit 2dbf281463e275b7b4094965232ee6430d77caaf
+Author: tukuf <sharifbeyy@gmail.com>
+Date:   Sun Aug 16 14:07:24 2026 +0300
+
+    Remove ClickPesa integration entirely
+
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..d7e5dcc
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,6 @@
++.env
++*.env
++__pycache__/
++*.py[cod]
++db.sqlite3
++media/
+diff --git a/END/rentproject/.env.example b/END/rentproject/.env.example
+new file mode 100644
+index 0000000..d802487
+--- /dev/null
++++ b/END/rentproject/.env.example
+@@ -0,0 +1,4 @@
++CLICKPESA_CLIENT_ID=your-clickpesa-client-id
++CLICKPESA_API_KEY=your-clickpesa-api-key
++CLICKPESA_CHECKSUM_SECRET=your-clickpesa-checksum-secret
++CLICKPESA_CURRENCY=TZS
+diff --git a/END/rentproject/db.sqlite3 b/END/rentproject/db.sqlite3
+index 56ff2a2..c32c4b0 100644
+Binary files a/END/rentproject/db.sqlite3 and b/END/rentproject/db.sqlite3 differ
+diff --git a/END/rentproject/rentapp/__pycache__/models.cpython-314.pyc b/END/rentproject/rentapp/__pycache__/models.cpython-314.pyc
+index 7e4eb3f..dbf1b80 100644
+Binary files a/END/rentproject/rentapp/__pycache__/models.cpython-314.pyc and b/END/rentproject/rentapp/__pycache__/models.cpython-314.pyc differ
+diff --git a/END/rentproject/rentapp/__pycache__/serializers.cpython-314.pyc b/END/rentproject/rentapp/__pycache__/serializers.cpython-314.pyc
+index 6f222c5..a38a894 100644
+Binary files a/END/rentproject/rentapp/__pycache__/serializers.cpython-314.pyc and b/END/rentproject/rentapp/__pycache__/serializers.cpython-314.pyc differ
+diff --git a/END/rentproject/rentapp/__pycache__/urls.cpython-314.pyc b/END/rentproject/rentapp/__pycache__/urls.cpython-314.pyc
+index e09c149..d300193 100644
+Binary files a/END/rentproject/rentapp/__pycache__/urls.cpython-314.pyc and b/END/rentproject/rentapp/__pycache__/urls.cpython-314.pyc differ
+diff --git a/END/rentproject/rentapp/__pycache__/views.cpython-314.pyc b/END/rentproject/rentapp/__pycache__/views.cpython-314.pyc
+index 293d13d..05db646 100644
+Binary files a/END/rentproject/rentapp/__pycache__/views.cpython-314.pyc and b/END/rentproject/rentapp/__pycache__/views.cpython-314.pyc differ
+diff --git a/END/rentproject/rentapp/models.py b/END/rentproject/rentapp/models.py
+index 1da7893..05a137f 100644
+--- a/END/rentproject/rentapp/models.py
++++ b/END/rentproject/rentapp/models.py
+@@ -311,18 +311,20 @@ class Reservation(models.Model):
+ class Payment(models.Model):
+     STATUS_PENDING = "PENDING"
+     STATUS_SUCCESSFUL = "SUCCESSFUL"
++    STATUS_PAID = "PAID"
+     STATUS_FAILED = "FAILED"
+ 
+     PAYMENT_STATUS_CHOICES = [
+         (STATUS_PENDING, "Pending"),
+         (STATUS_SUCCESSFUL, "Successful"),
++        (STATUS_PAID, "Paid"),
+         (STATUS_FAILED, "Failed"),
+     ]
+ 
+-    reservation = models.OneToOneField(
++    reservation = models.ForeignKey(
+         Reservation,
+         on_delete=models.CASCADE,
+-        related_name="payment"
++        related_name="payments"
+     )
+     payment_method = models.CharField(max_length=50)
+     phone_number = models.CharField(max_length=20)
+@@ -332,11 +334,20 @@ class Payment(models.Model):
+         choices=PAYMENT_STATUS_CHOICES,
+         default=STATUS_PENDING
+     )
+-    transaction_id = models.CharField(max_length=100, null=True, blank=True)
++    provider_transaction_id = models.CharField(max_length=120, null=True, blank=True)
++    transaction_id = models.CharField(max_length=120, null=True, blank=True)
++    provider_status = models.CharField(max_length=50, blank=True, default="")
++    initiation_response = models.JSONField(default=dict, blank=True)
++    webhook_payload = models.JSONField(default=dict, blank=True)
++    webhook_received_at = models.DateTimeField(null=True, blank=True)
++    updated_at = models.DateTimeField(auto_now=True)
+     created_at = models.DateTimeField(auto_now_add=True)
+ 
+     class Meta:
+         ordering = ["-created_at"]
++        indexes = [
++            models.Index(fields=["payment_status"]),
++        ]
+ 
+     def __str__(self):
+         return f"Payment for Reservation #{self.reservation.id} - {self.payment_status}"
+diff --git a/END/rentproject/rentapp/serializers.py b/END/rentproject/rentapp/serializers.py
+index 6f3fb53..cad6bed 100644
+--- a/END/rentproject/rentapp/serializers.py
++++ b/END/rentproject/rentapp/serializers.py
+@@ -196,5 +196,26 @@ class ReservationSerializer(serializers.ModelSerializer):
+ class PaymentSerializer(serializers.ModelSerializer):
+     class Meta:
+         model = Payment
+-        fields = "__all__"
+-        read_only_fields = ["payment_status", "transaction_id", "created_at"]
++        fields = [
++            "id",
++            "reservation",
++            "payment_method",
++            "phone_number",
++            "amount",
++            "payment_status",
++            "provider_transaction_id",
++            "transaction_id",
++            "provider_status",
++            "webhook_received_at",
++            "updated_at",
++            "created_at",
++        ]
++        read_only_fields = [
++            "payment_status",
++            "provider_transaction_id",
++            "transaction_id",
++            "provider_status",
++            "webhook_received_at",
++            "updated_at",
++            "created_at",
++        ]
+diff --git a/END/rentproject/rentapp/tests.py b/END/rentproject/rentapp/tests.py
+index 7ce503c..e5af6f0 100644
+--- a/END/rentproject/rentapp/tests.py
++++ b/END/rentproject/rentapp/tests.py
+@@ -1,3 +1,55 @@
+-from django.test import TestCase
++from datetime import date, timedelta
++from decimal import Decimal
++from unittest.mock import patch
++
++from django.conf import settings
++from django.contrib.auth import get_user_model
++from django.core.files.uploadedfile import SimpleUploadedFile
++from django.test import TestCase, override_settings
++from django.utils import timezone
++
++from .models import Property, Reservation
++from .views import release_reservation_for_failed_payment
++
++class PaymentFlowTests(TestCase):
++    def setUp(self):
++        self.owner = get_user_model().objects.create_user(
++            username="owner",
++            password="testpass123",
++        )
++        self.customer = get_user_model().objects.create_user(
++            username="customer",
++            password="testpass123",
++        )
++        self.property = Property.objects.create(
++            owner=self.owner,
++            title="Test House",
++            description="A place to stay",
++            price=Decimal("150000"),
++            location="Dar es Salaam",
++            image=SimpleUploadedFile("house.png", b"fake-image", content_type="image/png"),
++            status=Property.STATUS_RESERVED,
++            is_available=False,
++        )
++        self.reservation = Reservation.objects.create(
++            customer=self.customer,
++            property=self.property,
++            start_date=date(2026, 1, 1),
++            end_date=date(2026, 2, 1),
++            monthly_price=self.property.price,
++            total_months=1,
++            total_amount=Decimal("150000"),
++            expiry_time=timezone.now() + timedelta(hours=24),
++            reservation_status=Reservation.STATUS_PAYMENT_PROCESSING,
++        )
++
++    def test_release_reservation_for_failed_payment_makes_property_available(self):
++        release_reservation_for_failed_payment(self.reservation)
++
++        self.reservation.refresh_from_db()
++        self.property.refresh_from_db()
++
++        self.assertEqual(self.reservation.reservation_status, Reservation.STATUS_PENDING_PAYMENT)
++        self.assertEqual(self.property.status, Property.STATUS_AVAILABLE)
++        self.assertTrue(self.property.is_available)
+ 
+-# Create your tests here.
+diff --git a/END/rentproject/rentapp/views.py b/END/rentproject/rentapp/views.py
+index 5c6cf02..4d5ef57 100644
+--- a/END/rentproject/rentapp/views.py
++++ b/END/rentproject/rentapp/views.py
+@@ -1,7 +1,11 @@
++import json
++import logging
++from decimal import Decimal, InvalidOperation
+ from datetime import date, timedelta
+ 
+ from django.contrib.auth import authenticate, login
+ from django.contrib.auth.hashers import make_password
++from django.db import transaction
+ from django.shortcuts import render
+ from django.utils import timezone
+ from rest_framework.authtoken.models import Token
+@@ -13,6 +17,14 @@ from rest_framework.response import Response
+ from .models import *
+ from .models import User
+ from .serializers import *
++    FAILED_STATUSES,
++    SUCCESS_STATUSES,
++    generate_payment_reference,
++    normalize_tanzania_phone,
++    verify_checksum,
++)
++
++logger = logging.getLogger(__name__)
+ 
+ 
+ def auto_update_property_availability():
+@@ -46,6 +58,21 @@ def auto_update_property_availability():
+             prop.is_available = True
+             prop.save(update_fields=["is_available"])
+ 
++
++def release_reservation_for_failed_payment(reservation):
++    """Release the property so it becomes available again when payment fails."""
++    reservation.reservation_status = Reservation.STATUS_PENDING_PAYMENT
++    reservation.save(update_fields=["reservation_status"])
++
++    prop = reservation.property
++    if prop.status == Property.STATUS_RESERVED:
++        prop.status = Property.STATUS_AVAILABLE
++        prop.is_available = True
++        prop.save(update_fields=["status", "is_available"])
++
++    return reservation
++
++
+ # ===============================
+ # 🔁 GENERIC CRUD API
+ # ===============================
+@@ -973,7 +1000,7 @@ def check_reservation_expiry(request):
+ 
+ 
+ # ===============================
+-# 💳 PAYMENT APIs (PLACEHOLDERS)
++# 💳 PAYMENT APIs
+ # ===============================
+ 
+ @api_view(["POST"])
+@@ -981,78 +1008,82 @@ def check_reservation_expiry(request):
+ def initiate_mobile_payment(request):
+     """
+     POST /api/payment/initiate/
+-    Placeholder for initiating a mobile money payment.
++    Initiates a mobile money payment for a reservation.
+     """
+     data = request.data
+     reservation_id = data.get("reservation_id")
+     payment_method = data.get("payment_method")
+     phone_number = data.get("phone_number")
+-    amount = data.get("amount")
+ 
+-    if not all([reservation_id, payment_method, phone_number, amount]):
++    if not all([reservation_id, payment_method, phone_number]):
+         return Response({"error": "Missing payment fields."}, status=400)
+ 
+     try:
+-        reservation = Reservation.objects.get(id=reservation_id)
++        reservation = Reservation.objects.select_related("property", "customer").get(
++            id=reservation_id
++        )
+     except Reservation.DoesNotExist:
+         return Response({"error": "Reservation not found."}, status=404)
+ 
+-    if reservation.reservation_status != Reservation.STATUS_RESERVED:
+-        return Response({"error": "Only reserved properties can be paid for."}, status=400)
++    if reservation.customer != request.user:
++        return Response({"error": "Unauthorized."}, status=403)
++
++    if reservation.reservation_status not in [
++        Reservation.STATUS_RESERVED,
++        Reservation.STATUS_PENDING_PAYMENT,
++        Reservation.STATUS_PAYMENT_PROCESSING,
++    ]:
++        return Response({"error": "This reservation cannot be paid for."}, status=400)
++
++    if Payment.objects.filter(
++        reservation=reservation,
++        payment_status__in=[Payment.STATUS_SUCCESSFUL, Payment.STATUS_PAID],
++    ).exists():
++        return Response({"error": "This reservation is already paid."}, status=400)
++
++    try:
++        normalized_phone = normalize_tanzania_phone(phone_number)
++    except ValueError as exc:
++        return Response({"error": str(exc)}, status=400)
++
++    expected_amount = reservation.total_amount
++    submitted_amount = data.get("amount")
++    if submitted_amount not in [None, ""]:
++        try:
++            if Decimal(str(submitted_amount)) != expected_amount:
++                return Response({"error": "Invalid payment amount."}, status=400)
++        except (InvalidOperation, TypeError):
++            return Response({"error": "Invalid payment amount."}, status=400)
++
++    reference = generate_payment_reference()
+ 
+-    # 1. Create Payment Record (Pending)
+     payment = Payment.objects.create(
+         reservation=reservation,
+         payment_method=payment_method,
+-        phone_number=phone_number,
+-        amount=amount,
+-        payment_status=Payment.STATUS_PENDING
++        phone_number=normalized_phone,
++        amount=expected_amount,
++        payment_status=Payment.STATUS_PENDING,
+     )
+ 
+-    reservation.reservation_status = Reservation.STATUS_PAYMENT_PROCESSING
+-    reservation.save(update_fields=["reservation_status"])
+ 
+-    # Notify Customer - Payment Initiated
+-    Notification.objects.create(
+-        user=request.user,
+-        message=f"Payment of ${amount} for '{reservation.property.title}' initiated via {payment_method}.",
+-        type="GENERAL",
+-    )
+-
+-    # ==============================================================
+-    # 🚀 TODO: MOBILE MONEY API INTEGRATION WILL BE IMPLEMENTED HERE
+-    # ==============================================================
+-    # 1. Prepare payload with API credentials.
+-    # 2. Make request to payment gateway (M-Pesa, Airtel Money, etc.).
+-    # 3. Handle response and redirect user if necessary.
+-    
+-    # ⚠️ MOCKING SUCCESSFUL PAYMENT FOR UI FLOW ONLY
+-    payment.payment_status = Payment.STATUS_SUCCESSFUL
+-    payment.transaction_id = f"MOCK_TXN_{payment.id}"
+-    payment.save()
+ 
+-    reservation.reservation_status = Reservation.STATUS_PAID
+-    reservation.save(update_fields=["reservation_status"])
++    if reservation.reservation_status != Reservation.STATUS_PAYMENT_PROCESSING:
++        reservation.reservation_status = Reservation.STATUS_PAYMENT_PROCESSING
++        reservation.save(update_fields=["reservation_status"])
+ 
+-    # Notify Customer - Payment Successful
+     Notification.objects.create(
+         user=request.user,
+-        message=f"Payment successful! You have paid ${amount} for '{reservation.property.title}'. Waiting for admin approval.",
++        message=(
++            f"Payment request for '{reservation.property.title}' was sent to "
++            f"{normalized_phone}. Complete the prompt on your phone."
++        ),
+         type="GENERAL",
+     )
+ 
+-    # Also, we might create a Contract or RentalRequest here, but the 
+-    # requirements say to not ask the customer to fill rental details again.
+-    # We will automatically create an approved RentalRequest or Contract 
+-    # based on the reservation. The instructions say "Pending Approval" or "Approved".
+-    # For now, let's keep it in "Paid" state or "Pending Approval".
+-    reservation.reservation_status = Reservation.STATUS_PENDING_APPROVAL
+-    reservation.save(update_fields=["reservation_status"])
+-
+     return Response({
+-        "message": "Mobile Money API integration will be implemented here.",
+-        "payment": PaymentSerializer(payment).data
+-    })
++        "message": "Payment request sent. Complete the prompt on your phone.",
++        "payment": PaymentSerializer(payment).data,
++    }, status=201)
+ 
+ 
+ @api_view(["GET"])
+@@ -1063,37 +1094,16 @@ def verify_payment_status(request, payment_id):
+     Placeholder for verifying payment status.
+     """
+     try:
+-        payment = Payment.objects.get(id=payment_id)
++        payment = Payment.objects.select_related("reservation").get(id=payment_id)
+     except Payment.DoesNotExist:
+         return Response({"error": "Payment not found."}, status=404)
+ 
+-    # ==============================================================
+-    # 🚀 TODO: PAYMENT STATUS VERIFICATION WILL BE IMPLEMENTED HERE
+-    # ==============================================================
+-    # 1. Request transaction status from payment gateway using transaction_id.
+-    # 2. Update payment and reservation status based on gateway response.
++    if payment.reservation.customer != request.user and not request.user.is_staff:
++        return Response({"error": "Unauthorized."}, status=403)
+     
+     return Response(PaymentSerializer(payment).data)
+ 
+ 
+ @api_view(["POST"])
+ def payment_callback_handler(request):
+-    """
+-    POST /api/payment/callback/
+-    Placeholder for payment gateway webhooks.
+-    """
+-    # ==============================================================
+-    # 🚀 TODO: CALLBACK URL LOGIC WILL BE IMPLEMENTED HERE
+-    # ==============================================================
+-    # 1. Receive and parse gateway payload.
+-    # 2. Verify callback signature.
+-    # 3. Find matching Payment record.
+-    # 4. Update Payment and Reservation status (Success/Failed).
+-    # 5. Send notifications:
+-    #    - Payment successful
+-    #    - Payment failed
+-    #    - Rental approved
+-    #    - Rental completed
+-    
+     return Response({"message": "Callback received."})
+-
+diff --git a/END/rentproject/rentproject/__pycache__/settings.cpython-314.pyc b/END/rentproject/rentproject/__pycache__/settings.cpython-314.pyc
+index c796e89..6eaf5ba 100644
+Binary files a/END/rentproject/rentproject/__pycache__/settings.cpython-314.pyc and b/END/rentproject/rentproject/__pycache__/settings.cpython-314.pyc differ
+diff --git a/END/rentproject/rentproject/middleware.py b/END/rentproject/rentproject/middleware.py
+new file mode 100644
+index 0000000..b2f2e4e
+--- /dev/null
++++ b/END/rentproject/rentproject/middleware.py
+@@ -0,0 +1,61 @@
++"""
++Custom middleware to fix two issues that cause the Marzipano 360° viewer
++to show a black screen:
++
++1. CORS headers on /media/ responses.
++   Django's dev server bypasses django-cors-headers for media files.
++   Without Access-Control-Allow-Origin, the browser marks the image as
++   "tainted" and WebGL refuses to use it as a texture.
++
++2. Cross-Origin-Opener-Policy removal from /media/ responses.
++   Django's SecurityMiddleware adds Cross-Origin-Opener-Policy: same-origin.
++   When this is present on the *image* response, Chromium-based browsers
++   block the image from being used as a WebGL texture, causing a black screen.
++
++3. 127.0.0.1 → localhost URL rewriting in JSON API responses.
++   Django's request.build_absolute_uri() uses the raw server socket address
++   (127.0.0.1), but the browser origin is localhost:3000. Marzipano probes
++   the image with crossOrigin='anonymous'; if the host differs the browser
++   treats it as strictly cross-origin and WebGL may refuse the texture.
++   Rewriting image_url values to use localhost keeps everything same-host.
++"""
++
++
++
++
++class MediaCorsMiddleware:
++    """
++    Fixes CORS / WebGL texture loading for /media/ files and JSON responses.
++    """
++
++    def __init__(self, get_response):
++        self.get_response = get_response
++
++    def __call__(self, request):
++        response = self.get_response(request)
++
++        # ── Fix 1 & 2: media file responses ──────────────────────────────────
++        if request.path.startswith("/media/"):
++            response["Access-Control-Allow-Origin"] = "*"
++            response["Access-Control-Allow-Methods"] = "GET, OPTIONS"
++            response["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
++            # Remove COOP – it blocks WebGL from using the image as a texture
++            if "Cross-Origin-Opener-Policy" in response:
++                del response["Cross-Origin-Opener-Policy"]
++            if "Cross-Origin-Embedder-Policy" in response:
++                del response["Cross-Origin-Embedder-Policy"]
++
++        # ── Fix 3: rewrite 127.0.0.1 → localhost in JSON bodies ─────────────
++        content_type = response.get("Content-Type", "")
++        if "application/json" in content_type:
++            try:
++                content = response.content.decode("utf-8")
++                if "127.0.0.1" in content:
++                    content = content.replace(
++                        "http://127.0.0.1:8000", "http://localhost:8000"
++                    )
++                    response.content = content.encode("utf-8")
++            except Exception:
++                pass  # Never break the response; silently skip on error
++
++        return response
+diff --git a/END/rentproject/rentproject/settings.py b/END/rentproject/rentproject/settings.py
+index 7725d77..be24900 100644
+--- a/END/rentproject/rentproject/settings.py
++++ b/END/rentproject/rentproject/settings.py
+@@ -10,6 +10,7 @@ For the full list of settings and their values, see
+ https://docs.djangoproject.com/en/6.0/ref/settings/
+ """
+ 
++import os
+ from datetime import timedelta
+ from pathlib import Path
+ 
+@@ -24,6 +25,20 @@ REST_FRAMEWORK = {
+ BASE_DIR = Path(__file__).resolve().parent.parent
+ 
+ 
++def load_local_env(path):
++    if not path.exists():
++        return
++    for line in path.read_text().splitlines():
++        line = line.strip()
++        if not line or line.startswith("#") or "=" not in line:
++            continue
++        key, value = line.split("=", 1)
++        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
++
++
++load_local_env(BASE_DIR / ".env")
++
++
+ # Quick-start development settings - unsuitable for production
+ # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
+ 
+@@ -33,7 +48,11 @@ SECRET_KEY = "django-insecure-w_%^d+f6=wpq%)kzw(*b$pa6dy3@j9zz=&mcv-nb=)gw+97k#1
+ # SECURITY WARNING: don't run with debug turned on in production!
+ DEBUG = True
+ 
+-ALLOWED_HOSTS = []
++ALLOWED_HOSTS = [
++    "localhost",
++    "127.0.0.1",
++    "cattail-enjoyable-photo.ngrok-free.dev",
++]   
+ 
+ 
+ # Application definition
+@@ -52,6 +71,9 @@ INSTALLED_APPS = [
+ ]
+ 
+ MIDDLEWARE = [
++    # Must be first: injects CORS headers on /media/ files so Marzipano WebGL
++    # can load 360° panorama images without a tainted-canvas browser error.
++    "rentproject.middleware.MediaCorsMiddleware",
+     "corsheaders.middleware.CorsMiddleware",
+     "django.middleware.security.SecurityMiddleware",
+     "django.contrib.sessions.middleware.SessionMiddleware",
+@@ -135,3 +157,4 @@ STATIC_URL = "static/"
+ 
+ MEDIA_URL = "/media/"
+ MEDIA_ROOT = BASE_DIR / "media"
++
+diff --git a/FRONT/rentapp/src/components/PaymentModal.jsx b/FRONT/rentapp/src/components/PaymentModal.jsx
+index d64134e..2d27365 100644
+--- a/FRONT/rentapp/src/components/PaymentModal.jsx
++++ b/FRONT/rentapp/src/components/PaymentModal.jsx
+@@ -1,6 +1,5 @@
+-import { useState } from "react";
++import { useEffect, useMemo, useRef, useState } from "react";
+ import api from "../services/authService";
+-import Swal from "sweetalert2";
+ 
+ const fmt = (d) =>
+   d
+@@ -12,130 +11,206 @@ const fmt = (d) =>
+     : "N/A";
+ 
+ const fmtMoney = (v) =>
+-  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
+-    v ?? 0
++  new Intl.NumberFormat("en-US", { style: "currency", currency: "TZS" }).format(
++    Number(v ?? 0)
+   );
+ 
+ const PAYMENT_METHODS = [
+-  { id: "MPESA", name: "M-Pesa", color: "#4ade80", icon: "🟢" }, // Placeholder icons
+-  { id: "AIRTEL", name: "Airtel Money", color: "#ef4444", icon: "🔴" },
+-  { id: "TIGO", name: "Tigo Pesa", color: "#3b82f6", icon: "🔵" },
+-  { id: "HALOPESA", name: "HaloPesa", color: "#f97316", icon: "🟠" },
++  { id: "MPESA", name: "M-Pesa", tone: "#16a34a" },
++  { id: "AIRTEL", name: "Airtel Money", tone: "#dc2626" },
++  { id: "TIGO", name: "Tigo Pesa", tone: "#2563eb" },
++  { id: "HALOPESA", name: "HaloPesa", tone: "#ea580c" },
+ ];
+ 
++const PAID_STATUSES = ["SUCCESSFUL", "PAID", "COMPLETED"];
++const FAILED_STATUSES = ["FAILED", "REJECTED", "CANCELLED", "TIMEOUT"];
++
++function normalizeTanzaniaPhone(value) {
++  let digits = String(value || "").replace(/\D/g, "");
++  if (digits.startsWith("00255")) digits = digits.slice(2);
++  else if (digits.startsWith("0") && digits.length === 10) digits = `255${digits.slice(1)}`;
++  else if ((digits.startsWith("7") || digits.startsWith("6")) && digits.length === 9) digits = `255${digits}`;
++  return digits;
++}
++
++function validateTanzaniaPhone(value) {
++  const normalized = normalizeTanzaniaPhone(value);
++  return /^255[67]\d{8}$/.test(normalized) ? normalized : "";
++}
++
+ export default function PaymentModal({ reservation, onClose, onPaymentSuccess }) {
+   const [phoneNumber, setPhoneNumber] = useState("");
+   const [paymentMethod, setPaymentMethod] = useState("MPESA");
+   const [submitting, setSubmitting] = useState(false);
++  const [payment, setPayment] = useState(null);
++  const [status, setStatus] = useState("READY");
++  const [message, setMessage] = useState("");
++  const [error, setError] = useState("");
++  const pollRef = useRef(null);
+ 
+   const prop = reservation?.property;
++  const normalizedPhone = useMemo(() => validateTanzaniaPhone(phoneNumber), [phoneNumber]);
++
++  useEffect(() => {
++    return () => {
++      if (pollRef.current) window.clearInterval(pollRef.current);
++    };
++  }, []);
+ 
+   if (!reservation) return null;
+ 
++  const stopPolling = () => {
++    if (pollRef.current) {
++      window.clearInterval(pollRef.current);
++      pollRef.current = null;
++    }
++  };
++
++  const pollPaymentStatus = (paymentId) => {
++    stopPolling();
++    pollRef.current = window.setInterval(async () => {
++      try {
++        const res = await api.get(`/api/payment/verify/${paymentId}/`);
++        const latest = res.data;
++        setPayment(latest);
++
++        if (PAID_STATUSES.includes(latest.payment_status)) {
++          stopPolling();
++          setStatus("PAID");
++          setMessage("Payment confirmed. Your reservation is waiting for admin approval.");
++          if (onPaymentSuccess) onPaymentSuccess(latest);
++        } else if (FAILED_STATUSES.includes(latest.payment_status)) {
++          stopPolling();
++          setStatus("FAILED");
++          setError("Payment was not completed. You can retry with the same reservation.");
++        }
++      } catch (err) {
++        stopPolling();
++        setStatus("FAILED");
++        setError(err.response?.data?.error || "Could not check payment status.");
++      }
++    }, 5000);
++  };
++
+   const handlePay = async (e) => {
+     e.preventDefault();
+-    if (!phoneNumber) {
+-      Swal.fire("Required", "Please enter your mobile money phone number.", "warning");
++    stopPolling();
++    setError("");
++
++    if (!normalizedPhone) {
++      setError("Enter a valid Tanzanian mobile number, for example 0712345678.");
+       return;
+     }
+ 
+     setSubmitting(true);
++    setStatus("INITIATING");
++    setMessage("Sending payment request to your phone...");
++
+     try {
+       const res = await api.post("/api/payment/initiate/", {
+         reservation_id: reservation.id,
+         payment_method: paymentMethod,
+-        phone_number: phoneNumber,
++        phone_number: normalizedPhone,
+         amount: reservation.total_amount,
+       });
+ 
+-      await Swal.fire({
+-        title: "Payment Initiated",
+-        html: `<strong>${res.data.message}</strong><br/><br/><span style="color:var(--gray-500);font-size:0.9rem;">(This is a mock UI flow. Payment recorded successfully in the system.)</span>`,
+-        icon: "info",
+-        confirmButtonColor: "#2563eb",
+-      });
+-
+-      if (onPaymentSuccess) {
+-        onPaymentSuccess(res.data.payment);
+-      }
+-    } catch (err) {
+-      Swal.fire(
+-        "Error",
+-        err.response?.data?.error || "Failed to initiate payment.",
+-        "error"
++      setPayment(res.data.payment);
++      setStatus("WAITING");
++      setMessage(
++        "Payment prompt sent to your phone. Enter your mobile-money PIN to complete the payment."
+       );
++      pollPaymentStatus(res.data.payment.id);
++    } catch (err) {
++      setStatus("FAILED");
++      setError(err.response?.data?.error || "Failed to initiate payment.");
+     } finally {
+       setSubmitting(false);
+     }
+   };
+ 
++  const canRetry = status === "FAILED" || status === "WAITING";
++
+   return (
+-    <div style={overlayStyle}>
++    <div style={overlayStyle} role="dialog" aria-modal="true" aria-label="Complete payment">
+       <div style={modalStyle}>
+-        <button style={closeBtnStyle} onClick={onClose}>
+-          ✕
++        <button style={closeBtnStyle} onClick={onClose} aria-label="Close payment modal">
++          ×
+         </button>
+ 
+-        <h2 style={titleStyle}>Complete Payment</h2>
+-        <p style={subtitleStyle}>Secure your reservation for {prop?.title}</p>
++        <div style={headerStyle}>
++          <div>
++            <h2 style={titleStyle}>Complete Payment</h2>
++            <p style={subtitleStyle}>Secure your reservation for {prop?.title}</p>
++          </div>
++          <div style={statusBadgeStyle(status)}>{statusLabel(status)}</div>
++        </div>
+ 
+-        {/* Summary Card */}
+         <div style={summaryCardStyle}>
+           <div style={summaryGrid}>
+-            <SummaryItem label="Property Name" value={prop?.title} />
++            <SummaryItem label="Property" value={prop?.title} />
++            <SummaryItem label="Location" value={prop?.location} />
+             <SummaryItem label="Monthly Rent" value={fmtMoney(reservation.monthly_price)} />
+-            <SummaryItem label="Duration" value={`${reservation.total_months} Month(s)`} />
++            <SummaryItem label="Duration" value={`${reservation.total_months} month(s)`} />
+             <SummaryItem label="Start Date" value={fmt(reservation.start_date)} />
+             <SummaryItem label="End Date" value={fmt(reservation.end_date)} />
+           </div>
+           <div style={totalDivider} />
+           <div style={totalRow}>
+-            <span style={totalLabel}>Total Amount to Pay</span>
++            <span style={totalLabel}>Amount to Pay</span>
+             <span style={totalValue}>{fmtMoney(reservation.total_amount)}</span>
+           </div>
+         </div>
+ 
+-        {/* Payment Form */}
+-        <form onSubmit={handlePay} style={formStyle}>
+-          <div style={fieldGroupStyle}>
+-            <label style={labelStyle}>Select Payment Method</label>
+-            <div style={methodsGrid}>
+-              {PAYMENT_METHODS.map((method) => (
+-                <div
+-                  key={method.id}
+-                  style={methodItemStyle(paymentMethod === method.id, method.color)}
+-                  onClick={() => setPaymentMethod(method.id)}
+-                >
+-                  <span style={{ fontSize: "1.2rem" }}>{method.icon}</span>
+-                  <span style={methodNameStyle}>{method.name}</span>
+-                  {paymentMethod === method.id && (
+-                    <span style={{ marginLeft: "auto", color: method.color }}>
+-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+-                        <polyline points="20 6 9 17 4 12"></polyline>
+-                      </svg>
+-                    </span>
+-                  )}
+-                </div>
+-              ))}
+-            </div>
+-          </div>
++        {(message || error) && (
++          <div style={noticeStyle(error ? "error" : status === "PAID" ? "success" : "info")}>
++            <strong>{error ? "Payment update" : statusLabel(status)}</strong>
++            <span>{error || message}</span>
+ 
+-          <div style={fieldGroupStyle}>
+-            <label style={labelStyle}>Mobile Money Phone Number</label>
+-            <input
+-              type="tel"
+-              value={phoneNumber}
+-              onChange={(e) => setPhoneNumber(e.target.value)}
+-              placeholder="e.g. 0700 000 000"
+-              style={inputStyle}
+-              required
+-            />
+           </div>
++        )}
++
++        {status !== "PAID" && (
++          <form onSubmit={handlePay} style={formStyle}>
++            <div style={fieldGroupStyle}>
++              <label style={labelStyle}>Mobile-money method</label>
++              <div style={methodsGrid}>
++                {PAYMENT_METHODS.map((method) => (
++                  <button
++                    type="button"
++                    key={method.id}
++                    style={methodItemStyle(paymentMethod === method.id, method.tone)}
++                    onClick={() => setPaymentMethod(method.id)}
++                    disabled={submitting}
++                  >
++                    <span style={methodDotStyle(method.tone)} />
++                    <span style={methodNameStyle}>{method.name}</span>
++                    {paymentMethod === method.id && <span style={checkStyle}>✓</span>}
++                  </button>
++                ))}
++              </div>
++            </div>
+ 
+-          <button type="submit" disabled={submitting} style={payBtnStyle(submitting)}>
+-            {submitting ? "Processing..." : `Pay ${fmtMoney(reservation.total_amount)}`}
+-          </button>
+-        </form>
++            <div style={fieldGroupStyle}>
++              <label style={labelStyle}>Tanzanian mobile number</label>
++              <input
++                type="tel"
++                value={phoneNumber}
++                onChange={(e) => setPhoneNumber(e.target.value)}
++                placeholder="0712345678"
++                style={inputStyle(Boolean(phoneNumber) && !normalizedPhone)}
++                disabled={submitting}
++                required
++              />
++              <small style={hintStyle}>
++                Accepted formats include 0712345678, +255712345678, 255712345678, or 712345678.
++              </small>
++            </div>
++
++            <button type="submit" disabled={submitting || status === "INITIATING"} style={payBtnStyle(submitting || status === "INITIATING")}>
++              {submitting ? "Initiating..." : canRetry ? "Retry Payment" : `Pay ${fmtMoney(reservation.total_amount)}`}
++            </button>
++          </form>
++        )}
+       </div>
+     </div>
+   );
+@@ -145,61 +220,73 @@ function SummaryItem({ label, value }) {
+   return (
+     <div style={summaryItemStyle}>
+       <span style={summaryItemLabel}>{label}</span>
+-      <span style={summaryItemValue}>{value}</span>
++      <span style={summaryItemValue}>{value || "N/A"}</span>
+     </div>
+   );
+ }
+ 
+-// --- Styles ---
++function statusLabel(status) {
++  const labels = {
++    READY: "Ready",
++    INITIATING: "Initiating",
++    WAITING: "Waiting for confirmation",
++    PAID: "Payment confirmed",
++    FAILED: "Retry available",
++  };
++  return labels[status] || "Ready";
++}
++
+ const overlayStyle = {
+   position: "fixed",
+-  top: 0,
+-  left: 0,
+-  right: 0,
+-  bottom: 0,
+-  backgroundColor: "rgba(17, 24, 39, 0.7)",
++  inset: 0,
++  backgroundColor: "rgba(15, 23, 42, 0.72)",
+   backdropFilter: "blur(4px)",
+   display: "flex",
+   alignItems: "center",
+   justifyContent: "center",
+-  zIndex: 1000,
++  zIndex: 20000,
+   padding: "20px",
+ };
+ 
+ const modalStyle = {
+   background: "#ffffff",
+-  borderRadius: "20px",
++  borderRadius: "14px",
+   width: "100%",
+-  maxWidth: "500px",
+-  padding: "28px",
+-  boxShadow: "0 20px 40px rgba(0,0,0,0.2)",
++  maxWidth: "560px",
++  padding: "24px",
++  boxShadow: "0 24px 50px rgba(0,0,0,0.22)",
+   position: "relative",
+-  animation: "fadeInUp 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
+-  maxHeight: "90vh",
++  zIndex: 20001,
++  maxHeight: "92vh",
+   overflowY: "auto",
+ };
+ 
+ const closeBtnStyle = {
+   position: "absolute",
+-  top: "20px",
+-  right: "20px",
++  top: "16px",
++  right: "16px",
+   background: "#f3f4f6",
+   border: "none",
+   width: "32px",
+   height: "32px",
+   borderRadius: "50%",
+-  display: "flex",
+-  alignItems: "center",
+-  justifyContent: "center",
+-  fontSize: "14px",
++  fontSize: "20px",
+   color: "#4b5563",
+   cursor: "pointer",
+-  transition: "all 0.2s",
++};
++
++const headerStyle = {
++  display: "flex",
++  justifyContent: "space-between",
++  alignItems: "flex-start",
++  gap: "16px",
++  marginRight: "36px",
++  marginBottom: "20px",
+ };
+ 
+ const titleStyle = {
+   fontFamily: "var(--font-display)",
+-  fontSize: "1.4rem",
++  fontSize: "1.35rem",
+   fontWeight: 800,
+   color: "#111827",
+   margin: "0 0 4px",
+@@ -208,128 +295,115 @@ const titleStyle = {
+ const subtitleStyle = {
+   fontSize: "0.9rem",
+   color: "#6b7280",
+-  margin: "0 0 24px",
+-};
+-
+-const summaryCardStyle = {
+-  background: "linear-gradient(135deg, #f8fafc, #f1f5f9)",
+-  borderRadius: "16px",
+-  padding: "20px",
+-  border: "1px solid #e2e8f0",
+-  marginBottom: "24px",
+-};
+-
+-const summaryGrid = {
+-  display: "flex",
+-  flexDirection: "column",
+-  gap: "10px",
+-};
+-
+-const summaryItemStyle = {
+-  display: "flex",
+-  justifyContent: "space-between",
+-  alignItems: "center",
+-};
+-
+-const summaryItemLabel = {
+-  fontSize: "0.85rem",
+-  color: "#64748b",
+-  fontWeight: 500,
+-};
+-
+-const summaryItemValue = {
+-  fontSize: "0.9rem",
+-  color: "#1e293b",
+-  fontWeight: 700,
+-  textAlign: "right",
+-};
+-
+-const totalDivider = {
+-  height: "1px",
+-  background: "#cbd5e1",
+-  margin: "14px 0",
++  margin: 0,
+ };
+ 
+-const totalRow = {
+-  display: "flex",
+-  justifyContent: "space-between",
+-  alignItems: "center",
+-};
+-
+-const totalLabel = {
+-  fontSize: "1rem",
+-  fontWeight: 800,
+-  color: "#0f172a",
+-};
+-
+-const totalValue = {
+-  fontSize: "1.3rem",
+-  fontWeight: 900,
+-  color: "#2563eb",
++const statusBadgeStyle = (status) => {
++  const colors = {
++    READY: ["#f3f4f6", "#374151", "#d1d5db"],
++    INITIATING: ["#eff6ff", "#1d4ed8", "#bfdbfe"],
++    WAITING: ["#fff7ed", "#c2410c", "#fed7aa"],
++    PAID: ["#dcfce7", "#166534", "#bbf7d0"],
++    FAILED: ["#fee2e2", "#991b1b", "#fecaca"],
++  }[status] || ["#f3f4f6", "#374151", "#d1d5db"];
++  return {
++    flexShrink: 0,
++    padding: "6px 10px",
++    borderRadius: "999px",
++    background: colors[0],
++    color: colors[1],
++    border: `1px solid ${colors[2]}`,
++    fontSize: "0.72rem",
++    fontWeight: 800,
++    textTransform: "uppercase",
++  };
+ };
+ 
+-const formStyle = {
+-  display: "flex",
+-  flexDirection: "column",
+-  gap: "20px",
++const summaryCardStyle = {
++  background: "#f8fafc",
++  borderRadius: "10px",
++  padding: "18px",
++  border: "1px solid #e2e8f0",
++  marginBottom: "18px",
+ };
+ 
+-const fieldGroupStyle = {
+-  display: "flex",
+-  flexDirection: "column",
+-  gap: "8px",
++const summaryGrid = { display: "flex", flexDirection: "column", gap: "10px" };
++const summaryItemStyle = { display: "flex", justifyContent: "space-between", gap: "16px" };
++const summaryItemLabel = { fontSize: "0.84rem", color: "#64748b", fontWeight: 600 };
++const summaryItemValue = { fontSize: "0.9rem", color: "#1e293b", fontWeight: 800, textAlign: "right" };
++const totalDivider = { height: "1px", background: "#cbd5e1", margin: "14px 0" };
++const totalRow = { display: "flex", justifyContent: "space-between", alignItems: "center" };
++const totalLabel = { fontSize: "1rem", fontWeight: 800, color: "#0f172a" };
++const totalValue = { fontSize: "1.25rem", fontWeight: 900, color: "#2563eb" };
++
++const noticeStyle = (type) => {
++  const palette = {
++    info: ["#eff6ff", "#1e40af", "#bfdbfe"],
++    success: ["#ecfdf5", "#166534", "#bbf7d0"],
++    error: ["#fef2f2", "#991b1b", "#fecaca"],
++  }[type];
++  return {
++    display: "flex",
++    flexDirection: "column",
++    gap: "4px",
++    padding: "12px 14px",
++    borderRadius: "10px",
++    background: palette[0],
++    color: palette[1],
++    border: `1px solid ${palette[2]}`,
++    fontSize: "0.9rem",
++    marginBottom: "18px",
++  };
+ };
+ 
+-const labelStyle = {
+-  fontSize: "0.85rem",
+-  fontWeight: 700,
+-  color: "#374151",
+-};
++const referenceStyle = { color: "inherit", opacity: 0.8, overflowWrap: "anywhere" };
++const formStyle = { display: "flex", flexDirection: "column", gap: "18px" };
++const fieldGroupStyle = { display: "flex", flexDirection: "column", gap: "8px" };
++const labelStyle = { fontSize: "0.85rem", fontWeight: 800, color: "#374151" };
+ 
+-const inputStyle = {
+-  padding: "12px 16px",
+-  border: "1.5px solid #d1d5db",
+-  borderRadius: "12px",
++const inputStyle = (invalid) => ({
++  padding: "12px 14px",
++  border: `1.5px solid ${invalid ? "#ef4444" : "#d1d5db"}`,
++  borderRadius: "10px",
+   fontSize: "1rem",
+   color: "#1f2937",
+   outline: "none",
+-  transition: "border-color 0.2s",
+-};
++});
+ 
+-const methodsGrid = {
+-  display: "grid",
+-  gridTemplateColumns: "1fr 1fr",
+-  gap: "12px",
+-};
++const hintStyle = { color: "#64748b", fontSize: "0.78rem", lineHeight: 1.4 };
++const methodsGrid = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" };
+ 
+ const methodItemStyle = (active, color) => ({
+   display: "flex",
+   alignItems: "center",
+   gap: "10px",
+   padding: "12px",
+-  borderRadius: "12px",
+-  border: active ? `2px solid ${color}` : "2px solid #e5e7eb",
+-  background: active ? `${color}10` : "#fff",
++  borderRadius: "10px",
++  border: active ? `2px solid ${color}` : "1.5px solid #e5e7eb",
++  background: active ? `${color}12` : "#fff",
+   cursor: "pointer",
+-  transition: "all 0.2s",
++  textAlign: "left",
+ });
+ 
+-const methodNameStyle = {
+-  fontSize: "0.9rem",
+-  fontWeight: 700,
+-  color: "#1f2937",
+-};
++const methodDotStyle = (color) => ({
++  width: "12px",
++  height: "12px",
++  borderRadius: "999px",
++  background: color,
++});
++
++const methodNameStyle = { fontSize: "0.9rem", fontWeight: 800, color: "#1f2937" };
++const checkStyle = { marginLeft: "auto", color: "#059669", fontWeight: 900 };
+ 
+ const payBtnStyle = (disabled) => ({
+-  marginTop: "10px",
+-  padding: "16px",
++  marginTop: "4px",
++  padding: "14px",
+   background: disabled ? "#9ca3af" : "linear-gradient(135deg, #10b981, #059669)",
+   color: "#fff",
+   border: "none",
+-  borderRadius: "12px",
+-  fontSize: "1.05rem",
+-  fontWeight: 800,
++  borderRadius: "10px",
++  fontSize: "1rem",
++  fontWeight: 900,
+   cursor: disabled ? "not-allowed" : "pointer",
+-  boxShadow: disabled ? "none" : "0 8px 20px rgba(16,185,129,0.3)",
+-  transition: "all 0.2s",
++  boxShadow: disabled ? "none" : "0 8px 18px rgba(16,185,129,0.25)",
+ });
+diff --git a/FRONT/rentapp/src/components/VirtualTourViewer.jsx b/FRONT/rentapp/src/components/VirtualTourViewer.jsx
+index 5a950a7..081da03 100644
+--- a/FRONT/rentapp/src/components/VirtualTourViewer.jsx
++++ b/FRONT/rentapp/src/components/VirtualTourViewer.jsx
+@@ -68,7 +68,7 @@ const VirtualTourViewer = ({ propertyId, onClose }) => {
+     };
+   }, [propertyId]);
+ 
+-  // ── 2. Build Marzipano scenes (lightweight – no image decoding yet) ────────
++  // ── 2. Build Marzipano scenes once we know image dimensions ───────────────
+   useEffect(() => {
+     if (!tourData || !panoRef.current) return;
+ 
+@@ -85,82 +85,100 @@ const VirtualTourViewer = ({ propertyId, onClose }) => {
+     });
+     viewerRef.current = viewer;
+ 
+-    // Shared geometry & view settings
+-    const geometry = new Marzipano.EquirectGeometry([{ width: 4096 }]);
+-    const limiter  = Marzipano.RectilinearView.limit.traditional(
+-      4096,
+-      120 * Math.PI / 180
+-    );
+-
+     const rooms = tourData.rooms;
+     const newScenes = {};
+ 
+-    rooms.forEach(room => {
+-      // Prefer the absolute image_url provided by the serializer
+-      const imageUrl = room.image_url || room.image;
+-      if (!imageUrl) return;
+-
+-      const view   = new Marzipano.RectilinearView(
+-        { pitch: 0, yaw: 0, fov: Math.PI / 2 },
+-        limiter
+-      );
+-      // Marzipano fetches this URL lazily when the scene becomes active
+-      const source = Marzipano.ImageUrlSource.fromString(imageUrl);
+-      const scene  = viewer.createScene({ source, geometry, view, pinFirstLevel: false });
+-
+-      newScenes[room.id] = { scene, data: room };
+-    });
++    // Pre-detect image widths so geometry is correct, then build scenes
++    const buildScenes = async () => {
++      for (const room of rooms) {
++        const imageUrl = room.image_url || room.image;
++        if (!imageUrl) continue;
++
++        // Probe the actual pixel width of the equirectangular image.
++        // Without this, Marzipano's geometry tile misaligns and renders black.
++        let imgWidth = 4096; // safe fallback
++        try {
++          await new Promise((resolve) => {
++            const probe = new Image();
++            probe.crossOrigin = 'anonymous';
++            probe.onload = () => { imgWidth = probe.naturalWidth || 4096; resolve(); };
++            probe.onerror = () => {
++              console.error('VirtualTour: failed to probe image', imageUrl);
++              resolve(); // use fallback width
++            };
++            probe.src = imageUrl;
++          });
++        } catch (_) { /* use fallback */ }
++
++        const geometry = new Marzipano.EquirectGeometry([{ width: imgWidth }]);
++        const limiter  = Marzipano.RectilinearView.limit.traditional(
++          imgWidth,
++          110 * Math.PI / 180   // max 110° FOV
++        );
++        const view = new Marzipano.RectilinearView(
++          { pitch: 0, yaw: 0, fov: Math.PI / 2 },   // 90° initial FOV
++          limiter
++        );
++
++        const source = Marzipano.ImageUrlSource.fromString(imageUrl);
++        const scene  = viewer.createScene({ source, geometry, view, pinFirstLevel: false });
++
++        newScenes[room.id] = { scene, data: room };
++      }
+ 
+-    // Attach hotspot DOM elements
+-    rooms.forEach(room => {
+-      const entry = newScenes[room.id];
+-      if (!entry || !room.hotspots || room.hotspots.length === 0) return;
++      // Attach hotspot DOM elements
++      rooms.forEach(room => {
++        const entry = newScenes[room.id];
++        if (!entry || !room.hotspots || room.hotspots.length === 0) return;
+ 
+-      room.hotspots.forEach(hotspot => {
+-        const el = document.createElement('div');
+-        el.className = 'tour-hotspot';
++        room.hotspots.forEach(hotspot => {
++          const el = document.createElement('div');
++          el.className = 'tour-hotspot';
+ 
+-        const icon = document.createElement('div');
+-        icon.className = 'tour-hotspot-icon';
+-        icon.innerHTML = `
+-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+-            <circle cx="12" cy="12" r="10"/>
+-            <polyline points="12 8 12 12 14 14"/>
+-          </svg>`;
++          const icon = document.createElement('div');
++          icon.className = 'tour-hotspot-icon';
++          icon.innerHTML = `
++            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
++              <circle cx="12" cy="12" r="10"/>
++              <polyline points="12 8 12 12 14 14"/>
++            </svg>`;
+ 
+-        const label = document.createElement('div');
+-        label.className = 'tour-hotspot-title';
+-        label.innerText = hotspot.title;
++          const label = document.createElement('div');
++          label.className = 'tour-hotspot-title';
++          label.innerText = hotspot.title;
+ 
+-        el.appendChild(icon);
+-        el.appendChild(label);
++          el.appendChild(icon);
++          el.appendChild(label);
+ 
+-        const pitchRad = ((hotspot.pitch || 0) * Math.PI) / 180;
+-        const yawRad   = ((hotspot.yaw   || 0) * Math.PI) / 180;
++          const pitchRad = ((hotspot.pitch || 0) * Math.PI) / 180;
++          const yawRad   = ((hotspot.yaw   || 0) * Math.PI) / 180;
+ 
+-        // Listener is added immediately so it works even when scene switches
+-        el.addEventListener('click', () => switchToRoom(hotspot.target_room_id));
++          el.addEventListener('click', () => switchToRoom(hotspot.target_room_id));
+ 
+-        entry.scene
+-          .hotspotContainer()
+-          .createHotspot(el, { pitch: pitchRad, yaw: yawRad });
++          entry.scene
++            .hotspotContainer()
++            .createHotspot(el, { pitch: pitchRad, yaw: yawRad });
++        });
+       });
+-    });
+ 
+-    scenesMapRef.current = newScenes;
+-    setRoomList(rooms);
++      scenesMapRef.current = newScenes;
++      setRoomList(rooms);
+ 
+-    // Switch to initial room
+-    const initialId = tourData.initial_room_id || rooms[0]?.id;
+-    const first     = newScenes[initialId] || Object.values(newScenes)[0];
+-    if (first) {
+-      first.scene.switchTo({ transitionDuration: 600 });
+-      setCurrentRoom(first.data.room_name);
+-    }
++      // Switch to initial room
++      const initialId = tourData.initial_room_id || rooms[0]?.id;
++      const first     = newScenes[initialId] || Object.values(newScenes)[0];
++      if (first) {
++        first.scene.switchTo({ transitionDuration: 600 });
++        setCurrentRoom(first.data.room_name);
++      }
+ 
+-    setLoading(false);
++      setLoading(false);
++    };
++
++    buildScenes();
+   }, [tourData]);   // eslint-disable-line react-hooks/exhaustive-deps
+ 
++
+   // ── 3. (Removed: Hotspot click events are now wired during creation) ────────
+ 
+   // ── 4. Room switching ──────────────────────────────────────────────────────
+diff --git a/FRONT/rentapp/src/pages/MyRentals.jsx b/FRONT/rentapp/src/pages/MyRentals.jsx
+index d0a9f16..a613141 100644
+--- a/FRONT/rentapp/src/pages/MyRentals.jsx
++++ b/FRONT/rentapp/src/pages/MyRentals.jsx
+@@ -67,11 +67,19 @@ function ReservationCard({ reservation, onCancelled, onPayNow }) {
+   const statusConfig = {
+     RESERVED: { bg: "#fef3c7", color: "#92400e", border: "#fde68a", label: "🏷️ Reserved" },
+     PENDING_PAYMENT: { bg: "#eff6ff", color: "#1e40af", border: "#bfdbfe", label: "💳 Pending Payment" },
++    PAYMENT_PROCESSING: { bg: "#fff7ed", color: "#c2410c", border: "#fed7aa", label: "⏳ Waiting for Payment" },
++    PENDING_APPROVAL: { bg: "#dcfce7", color: "#166534", border: "#bbf7d0", label: "✅ Paid - Pending Approval" },
+     EXPIRED: { bg: "#fee2e2", color: "#7f1d1d", border: "#fecaca", label: "⏰ Expired" },
+     CANCELLED: { bg: "#f3f4f6", color: "#374151", border: "#d1d5db", label: "❌ Cancelled" },
+   };
+ 
+   const sc = statusConfig[reservation.reservation_status] || statusConfig.RESERVED;
++  const canPay = ["RESERVED", "PENDING_PAYMENT", "PAYMENT_PROCESSING"].includes(
++    reservation.reservation_status
++  );
++  const canCancel = ["RESERVED", "PENDING_PAYMENT"].includes(
++    reservation.reservation_status
++  );
+ 
+   return (
+     <div style={cardWrap}>
+@@ -106,7 +114,7 @@ function ReservationCard({ reservation, onCancelled, onPayNow }) {
+         </div>
+ 
+         {/* Countdown / Expiry info */}
+-        {reservation.reservation_status === "RESERVED" && (
++        {canPay && (
+           <div style={timerBox}>
+             <div style={{ fontSize: "0.78rem", color: "#374151", fontWeight: 600, marginBottom: 8, textAlign: "center" }}>
+               ⏳ Reservation expires in
+@@ -125,7 +133,7 @@ function ReservationCard({ reservation, onCancelled, onPayNow }) {
+ 
+         {/* CTA buttons */}
+         <div style={btnRow}>
+-          {reservation.reservation_status === "RESERVED" && (
++          {canPay && (
+             <>
+               <button
+                 style={payNowBtn}
+@@ -133,11 +141,15 @@ function ReservationCard({ reservation, onCancelled, onPayNow }) {
+                   if (onPayNow) onPayNow(reservation);
+                 }}
+               >
+-                💳 Pay Now
+-              </button>
+-              <button style={cancelBtn} onClick={handleCancel}>
+-                ✕ Cancel
++                {reservation.reservation_status === "PAYMENT_PROCESSING"
++                  ? "Check / Retry Payment"
++                  : "💳 Pay Now"}
+               </button>
++              {canCancel && (
++                <button style={cancelBtn} onClick={handleCancel}>
++                  ✕ Cancel
++                </button>
++              )}
+             </>
+           )}
+         </div>
+@@ -270,7 +282,7 @@ function MyRentals() {
+ 
+   // Filtered sets
+   const activeReservations = reservations.filter(
+-    (r) => r.reservation_status === "RESERVED"
++    (r) => ["RESERVED", "PENDING_PAYMENT", "PAYMENT_PROCESSING"].includes(r.reservation_status)
+   );
+   const historyReservations = reservations.filter((r) =>
+     ["EXPIRED", "CANCELLED"].includes(r.reservation_status)
+diff --git a/FRONT/rentapp/src/pages/Properties.jsx b/FRONT/rentapp/src/pages/Properties.jsx
+index 4a71b30..42999c9 100644
+--- a/FRONT/rentapp/src/pages/Properties.jsx
++++ b/FRONT/rentapp/src/pages/Properties.jsx
+@@ -1,4 +1,4 @@
+-import { useState, useEffect, useCallback } from "react";
++import { useState, useEffect, useCallback, useRef } from "react";
+ import MainLayout from "../layout/MainLayout";
+ import api from "../services/authService";
+ import Swal from "sweetalert2";
+@@ -19,7 +19,10 @@ function Properties() {
+   const [savedProperties, setSavedProperties] = useState([]);
+   const [selectedProperty, setSelectedProperty] = useState(null);
+   const [showVirtualTour, setShowVirtualTour] = useState(false);
++  const [tourPropertyId, setTourPropertyId] = useState(null);
+   const [selectedReservationForPayment, setSelectedReservationForPayment] = useState(null);
++  // Tracks which property IDs have already had their visit recorded this session
++  const visitedRef = useRef(new Set());
+ 
+   useEffect(() => {
+     fetchProperties();
+@@ -33,14 +36,19 @@ function Properties() {
+     if (selectedProperty) {
+       document.addEventListener("keydown", handleEsc);
+       document.body.style.overflow = "hidden";
+-      // Record the customer's visit to this property
+-      recordVisit(selectedProperty.id);
++      // Only record the visit once per property per session to avoid an
++      // infinite loop: recordVisit called setSelectedProperty which
++      // re-triggered this effect which called recordVisit again.
++      if (!visitedRef.current.has(selectedProperty.id)) {
++        visitedRef.current.add(selectedProperty.id);
++        recordVisit(selectedProperty.id);
++      }
+     }
+     return () => {
+       document.removeEventListener("keydown", handleEsc);
+       document.body.style.overflow = "";
+     };
+-  }, [selectedProperty, closeModal]);
++  }, [selectedProperty, closeModal]); // eslint-disable-line react-hooks/exhaustive-deps
+ 
+   useEffect(() => {
+     const savePreferences = () => {
+@@ -91,16 +99,16 @@ function Properties() {
+   const recordVisit = async (propertyId) => {
+     try {
+       const response = await api.post(`/api/property/${propertyId}/record-visit/`);
++      // Update the count in the properties list only — do NOT call
++      // setSelectedProperty here, as that would re-trigger the useEffect
++      // above and cause an infinite POST loop.
+       setProperties((prev) =>
+         prev.map((p) =>
+           p.id === propertyId ? { ...p, unique_review_count: response.data.count } : p
+         )
+       );
+-      setSelectedProperty((prev) =>
+-        prev && prev.id === propertyId ? { ...prev, unique_review_count: response.data.count } : prev
+-      );
+     } catch (err) {
+-      // Silently fail - visit recording is non-critical
++      // Silently fail — visit recording is non-critical
+       console.error("Error recording visit:", err);
+     }
+   };
+@@ -483,7 +491,17 @@ function Properties() {
+               {/* Action Buttons */}
+               <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "24px" }}>
+                 {selectedProperty.has_virtual_tour && (
+-                  <button onClick={() => setShowVirtualTour(true)} className="btn-tour" style={modalVirtualTourBtnStyle}>
++                  <button
++                    onClick={() => {
++                      // Save the property ID before closing the modal,
++                      // since closeModal() clears selectedProperty.
++                      setTourPropertyId(selectedProperty.id);
++                      closeModal();
++                      setShowVirtualTour(true);
++                    }}
++                    className="btn-tour"
++                    style={modalVirtualTourBtnStyle}
++                  >
+                     <span className="icon">🎮</span> Start Virtual Tour
+                   </button>
+                 )}
+@@ -518,6 +536,7 @@ function Properties() {
+                       prev ? { ...prev, status: "Reserved", is_available: false } : prev
+                     );
+                     fetchProperties();
++                    closeModal();
+                     setSelectedReservationForPayment(reservation);
+                   }}
+                 />
+@@ -553,10 +572,10 @@ function Properties() {
+         </div>
+       )}
+ 
+-      {showVirtualTour && selectedProperty && (
+-        <VirtualTourViewer 
+-          propertyId={selectedProperty.id} 
+-          onClose={() => setShowVirtualTour(false)} 
++      {showVirtualTour && tourPropertyId && (
++        <VirtualTourViewer
++          propertyId={tourPropertyId}
++          onClose={() => { setShowVirtualTour(false); setTourPropertyId(null); }}
+         />
+       )}
+ 

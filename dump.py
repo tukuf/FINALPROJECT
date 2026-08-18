@@ -1,0 +1,2 @@
+"import urllib.request\nimport urllib.error\nimport json\nimport hmac\nimport hashlib\n\nCLIENT_ID = \"IDh8c0hiPcsRPDWeduHhywefyRUwApKr\"\nAPI_KEY = \"SKa43JBIn9PsK9UpyHRjSSKGO6d1HT82MqyKZJGHJN\"\nCHECKSUM_SECRET = \"SKBCBL87Ymmvow4UICNlGpSe5SY5KzRPajZ77vW
+<truncated 2288 bytes>
