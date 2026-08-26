@@ -16,10 +16,7 @@ const fmt = (d) =>
       })
     : "N/A";
 
-const fmtMoney = (v) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
-    v ?? 0
-  );
+const fmtMoney = (v) => "TZS " + Number(v ?? 0).toLocaleString();
 
 const getImageUrl = (img) => {
   if (!img) return "https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=400&h=250&fit=crop";

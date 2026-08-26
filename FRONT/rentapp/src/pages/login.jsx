@@ -37,6 +37,27 @@ function LoginPage() {
       <div style={containerStyle} className="animate-scale-in">
         {/* Logo */}
         <div style={logoContainerStyle}>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: "12px" }}>
+            <button
+              type="button"
+              onClick={() => navigate("/")}
+              style={{
+                background: "#f1f5f9",
+                border: "1px solid #cbd5e1",
+                borderRadius: "20px",
+                padding: "6px 16px",
+                fontSize: "0.82rem",
+                fontWeight: 700,
+                color: "#334155",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              ← Back to Home
+            </button>
+          </div>
           <div style={logoIconStyle}>
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>

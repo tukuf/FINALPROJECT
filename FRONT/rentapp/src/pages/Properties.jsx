@@ -205,7 +205,7 @@ function Properties() {
     return new Date(d).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
   };
 
-  const formatPrice = (p) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(p);
+  const formatPrice = (p) => "TZS " + Number(p || 0).toLocaleString();
 
   const getImageUrl = (img) => {
     if (!img) return "https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=400&h=250&fit=crop";
@@ -336,10 +336,16 @@ function Properties() {
                     <span style={{ fontSize: "0.8rem", color: "var(--gray-500)" }}>{property.average_rating || 0} ({property.unique_review_count || 0} Reviews)</span>
                   </div>
                   <p style={descStyle}>{property.description}</p>
-                  {!property.is_available && property.next_available_date && (
+                  {!property.is_available && (property.occupied_start_date || property.next_available_date) && (
                     <div style={nextAvailableTag}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                      Available again: {formatDate(property.next_available_date)}
+                      <div>
+                        {property.occupied_start_date && property.occupied_end_date ? (
+                          <>Occupied: {formatDate(property.occupied_start_date)} to {formatDate(property.occupied_end_date)} (Free again: {formatDate(property.occupied_end_date)})</>
+                        ) : (
+                          <>Available again: {formatDate(property.next_available_date)}</>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -423,12 +429,19 @@ function Properties() {
               </div>
 
               {/* Available Again Date */}
-              {!selectedProperty.is_available && selectedProperty.next_available_date && (
+              {!selectedProperty.is_available && (selectedProperty.occupied_start_date || selectedProperty.next_available_date) && (
                 <div style={modalAvailableAgainStyle}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: "0.85rem" }}>Available Again</div>
-                    <div style={{ fontSize: "0.82rem", opacity: 0.85 }}>{formatDate(selectedProperty.next_available_date)}</div>
+                    <div style={{ fontWeight: 700, fontSize: "0.88rem" }}>Occupied Period</div>
+                    {selectedProperty.occupied_start_date && selectedProperty.occupied_end_date && (
+                      <div style={{ fontSize: "0.82rem", opacity: 0.9 }}>
+                        From <strong>{formatDate(selectedProperty.occupied_start_date)}</strong> to <strong>{formatDate(selectedProperty.occupied_end_date)}</strong>
+                      </div>
+                    )}
+                    <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#15803d", marginTop: 4 }}>
+                      Available (free) again starting on: {formatDate(selectedProperty.occupied_end_date || selectedProperty.next_available_date)}
+                    </div>
                   </div>
                 </div>
               )}

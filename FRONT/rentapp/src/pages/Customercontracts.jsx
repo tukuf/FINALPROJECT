@@ -96,7 +96,7 @@ const Customercontracts = () => {
     const termsList = [
       { t: "1. Property Description", d: `The Landlord hereby agrees to rent to the Tenant the residential property located at ${prop?.location || "N/A"}, including all fixtures, appliances, and furniture currently on the premises.` },
       { t: "2. Term of Lease", d: `This rental agreement shall commence on ${contract.start_date || "N/A"}, and shall continue until ${contract.end_date || "N/A"}, unless otherwise terminated in accordance with the terms of this agreement.` },
-      { t: "3. Rental Payment", d: `The monthly rent shall be $${parseFloat(prop?.price || 0).toFixed(2)}, payable on the 1st day of each month. Payment shall be made via bank transfer to the Landlord's designated account.` },
+      { t: "3. Rental Payment", d: `The monthly rent shall be TZS ${Number(prop?.price || 0).toLocaleString()}, payable on the 1st day of each month. Payment shall be made via bank transfer to the Landlord's designated account.` },
       { t: "4. Security Deposit", d: `The Tenant agrees to pay a security deposit prior to occupancy. The deposit shall cover damages beyond normal wear and tear, if any.` },
       { t: "5. Use of Property", d: `The Tenant shall use the premises solely for residential purposes and shall not sublease or assign this agreement without written consent from the Landlord.` },
       { t: "6. Maintenance and Repairs", d: `The Tenant shall keep the property clean and in good condition. The Landlord is responsible for major repairs unless damages are caused by the Tenant's negligence.` },
@@ -208,11 +208,7 @@ const Customercontracts = () => {
   };
 
   const formatPrice = (price) => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 0,
-    }).format(price);
+    return "TZS " + Number(price || 0).toLocaleString();
   };
 
   const formatDate = (dateStr) => {

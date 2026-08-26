@@ -1,4 +1,3 @@
-import json
 import logging
 from decimal import Decimal, InvalidOperation
 from datetime import date, timedelta
@@ -7,17 +6,14 @@ from django.views.decorators.csrf import csrf_exempt
 
 from django.contrib.auth import authenticate, login
 from django.contrib.auth.hashers import make_password
-from django.db import transaction
-from django.shortcuts import render
 from django.utils import timezone
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
 # Create your views here.
 from .models import *
-from .models import User
 from .serializers import *
 from rentapp.services.clickpesa import (
     ClickPesaClient, ClickPesaError,
@@ -85,7 +81,7 @@ def register(request):
     data = request.data
 
     try:
-        user = User.objects.create(
+        User.objects.create(
             username=data["username"],
             email=data["email"],
             password=make_password(data["password"]),
@@ -294,8 +290,16 @@ def generic_api(model_class, serializer_class):
 
 
 # ===============================
-# 🔹 GENERIC ENDPOINTS
+# 🔹 PUBLIC & GENERIC ENDPOINTS
 # ===============================
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def public_properties(request):
+    auto_update_property_availability()
+    queryset = Property.objects.all().order_by("-id")
+    serializer = PropertySerializer(queryset, many=True, context={"request": request})
+    return Response(serializer.data)
+
 manage_user = generic_api(User, UserSerializer)
 manage_property = generic_api(Property, PropertySerializer)
 manage_savedproperty = generic_api(SavedProperty, SavedPropertySerializer)

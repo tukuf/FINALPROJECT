@@ -187,7 +187,7 @@ function SavedProperty() {
     return API_BASE_URL + normalizedPath;
   };
 
-  const formatPrice = (price) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(price);
+  const formatPrice = (price) => "TZS " + Number(price || 0).toLocaleString();
 
   const formatDate = (dateStr) => {
     if (!dateStr) return "";

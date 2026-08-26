@@ -1,0 +1,6 @@
+{
+    "python.defaultInterpreterPath": "/home/tukuf-jr/HOUSE_RENTING/END/myvenv/bin/python",
+    "python.analysis.extraPaths": [
+        "/home/tukuf-jr/HOUSE_RENTING/END/rentproject"
+    ]
+}

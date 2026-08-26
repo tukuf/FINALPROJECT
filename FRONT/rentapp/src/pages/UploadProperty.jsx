@@ -305,8 +305,32 @@ function UploadProperty() {
                         <td>#{p.id}</td>
                         <td><img src={getImageUrl(p.image)} alt={p.title} className="table-thumb" /></td>
                         <td><div className="cell-title">{p.title}</div><div className="cell-location">📍 {p.location}</div></td>
-                        <td><span className={`badge ${p.is_available ? "badge-success" : "badge-danger"}`}>{p.is_available ? "Available" : "Occupied"}</span></td>
-                        <td className="cell-price">${p.price}</td>
+                        <td>
+                          <span className={`badge ${p.is_available ? "badge-success" : p.status === "Reserved" ? "badge-warning" : "badge-danger"}`}>
+                            {p.status || (p.is_available ? "Available" : "Occupied")}
+                          </span>
+                          {p.status === "Reserved" && p.current_reservation?.customer_name && (
+                            <div style={{ fontSize: "0.82rem", color: "#d97706", marginTop: 4, fontWeight: 600 }}>
+                              👤 Reserved by: <strong>{p.current_reservation.customer_name}</strong>
+                              {p.current_reservation.start_date && p.current_reservation.end_date && (
+                                <div style={{ fontSize: "0.75rem", color: "#6b7280", fontWeight: "normal" }}>
+                                  📅 {p.current_reservation.start_date} to {p.current_reservation.end_date}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {(p.status === "Occupied" || (!p.is_available && p.status !== "Reserved")) && (
+                            <div style={{ fontSize: "0.82rem", color: "#b91c1c", marginTop: 4, fontWeight: 600 }}>
+                              👤 Rented by: <strong>{p.current_occupant?.username || "Tenant"}</strong>
+                              {p.occupied_start_date && p.occupied_end_date && (
+                                <div style={{ fontSize: "0.75rem", color: "#6b7280", fontWeight: "normal" }}>
+                                  📅 {p.occupied_start_date} to {p.occupied_end_date}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="cell-price">TZS {Number(p.price).toLocaleString()}</td>
                         <td>
                           <div className="action-buttons">
                             {p.status === "Reserved" && (

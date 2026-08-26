@@ -304,7 +304,7 @@ function ClientDashboard() {
                           {rec.location}
                         </div>
                         <div style={cardFooterStyle}>
-                          <span style={cardPriceStyle}>${rec.price}<span style={{ fontSize: "0.75rem", color: "var(--gray-400)", fontWeight: 500 }}>/mo</span></span>
+                          <span style={cardPriceStyle}>TZS {Number(rec.price).toLocaleString()}<span style={{ fontSize: "0.75rem", color: "var(--gray-400)", fontWeight: 500 }}>/mo</span></span>
                           <Link to="/properties" className="btn btn-primary btn-sm" style={{ textDecoration: "none" }}>
                             View
                           </Link>
@@ -359,7 +359,7 @@ function ClientDashboard() {
                           </span>
                         </div>
                         <div style={cardFooterStyle}>
-                          <span style={cardPriceStyle}>${house.price}<span style={{ fontSize: "0.75rem", color: "var(--gray-400)", fontWeight: 500 }}>/mo</span></span>
+                          <span style={cardPriceStyle}>TZS {Number(house.price).toLocaleString()}<span style={{ fontSize: "0.75rem", color: "var(--gray-400)", fontWeight: 500 }}>/mo</span></span>
                           <Link to="/properties" className="btn btn-primary btn-sm" style={{ textDecoration: "none" }}>
                             View
                           </Link>

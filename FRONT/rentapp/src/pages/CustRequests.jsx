@@ -322,10 +322,7 @@ const CustRequests = () => {
 
   const formatPrice = (price) => {
     if (!price) return "N/A";
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    }).format(price);
+    return "TZS " + Number(price).toLocaleString();
   };
 
   return (

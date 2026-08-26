@@ -68,6 +68,10 @@ class Property360ImageSerializer(serializers.ModelSerializer):
 
 class PropertySerializer(serializers.ModelSerializer):
     next_available_date = serializers.SerializerMethodField()
+    occupied_start_date = serializers.SerializerMethodField()
+    occupied_end_date = serializers.SerializerMethodField()
+    current_occupant = serializers.SerializerMethodField()
+    current_reservation = serializers.SerializerMethodField()
     average_rating = serializers.SerializerMethodField()
     reviews = serializers.SerializerMethodField()
     has_virtual_tour = serializers.SerializerMethodField()
@@ -78,25 +82,106 @@ class PropertySerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["owner"]
 
-    def get_next_available_date(self, obj):
-        if obj.is_available:
-            return None
-        # Check both Contract and approved RentalRequest for the latest end_date
-        latest_date = None
+    def _get_active_occupancy(self, obj):
+        # Check Contract first
         latest_contract = (
             Contract.objects.filter(property=obj).order_by("-end_date").first()
         )
         if latest_contract and latest_contract.end_date:
-            latest_date = latest_contract.end_date
+            return {
+                "start_date": latest_contract.start_date,
+                "end_date": latest_contract.end_date,
+                "user": {
+                    "id": latest_contract.user.id,
+                    "username": latest_contract.user.username,
+                    "email": latest_contract.user.email,
+                }
+            }
+
+        # Check approved RentalRequest
         latest_approved_request = (
             RentalRequest.objects.filter(property=obj, status="APPROVED")
             .order_by("-end_date")
             .first()
         )
         if latest_approved_request and latest_approved_request.end_date:
-            if latest_date is None or latest_approved_request.end_date > latest_date:
-                latest_date = latest_approved_request.end_date
-        return latest_date
+            return {
+                "start_date": latest_approved_request.start_date,
+                "end_date": latest_approved_request.end_date,
+                "user": {
+                    "id": latest_approved_request.user.id,
+                    "username": latest_approved_request.user.username,
+                    "email": latest_approved_request.user.email,
+                }
+            }
+
+        # Check paid/approved Reservation
+        latest_paid_reservation = (
+            Reservation.objects.filter(
+                property=obj,
+                reservation_status__in=[
+                    Reservation.STATUS_PAID,
+                    Reservation.STATUS_PENDING_APPROVAL,
+                    Reservation.STATUS_APPROVED
+                ]
+            ).order_by("-end_date").first()
+        )
+        if latest_paid_reservation and latest_paid_reservation.end_date:
+            return {
+                "start_date": latest_paid_reservation.start_date,
+                "end_date": latest_paid_reservation.end_date,
+                "user": {
+                    "id": latest_paid_reservation.customer.id,
+                    "username": latest_paid_reservation.customer.username,
+                    "email": latest_paid_reservation.customer.email,
+                }
+            }
+
+        return None
+
+    def get_occupied_start_date(self, obj):
+        occ = self._get_active_occupancy(obj)
+        return occ["start_date"] if occ else None
+
+    def get_occupied_end_date(self, obj):
+        occ = self._get_active_occupancy(obj)
+        return occ["end_date"] if occ else None
+
+    def get_next_available_date(self, obj):
+        if obj.is_available:
+            return None
+        occ = self._get_active_occupancy(obj)
+        return occ["end_date"] if occ else None
+
+    def get_current_occupant(self, obj):
+        occ = self._get_active_occupancy(obj)
+        return occ["user"] if occ else None
+
+    def get_current_reservation(self, obj):
+        from django.utils import timezone
+        res = Reservation.objects.filter(
+            property=obj,
+            reservation_status__in=[
+                Reservation.STATUS_RESERVED,
+                Reservation.STATUS_PENDING_PAYMENT,
+                Reservation.STATUS_PAYMENT_PROCESSING
+            ],
+            expiry_time__gt=timezone.now()
+        ).order_by("-reservation_time").first()
+
+        if res:
+            return {
+                "id": res.id,
+                "customer_id": res.customer.id,
+                "customer_name": res.customer.username,
+                "customer_email": res.customer.email,
+                "start_date": res.start_date,
+                "end_date": res.end_date,
+                "expiry_time": res.expiry_time,
+                "total_amount": str(res.total_amount),
+                "reservation_status": res.reservation_status,
+            }
+        return None
 
     def get_average_rating(self, obj):
         if obj.rating_count == 0:

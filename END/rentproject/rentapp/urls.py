@@ -1,4 +1,4 @@
-from django.urls import path, include
+from django.urls import path
 from rest_framework.authtoken.views import obtain_auth_token
 from rentapp.views import payment_callback_handler   # <-- import the view
 
@@ -11,6 +11,8 @@ urlpatterns = [
     path("user/", manage_user),
     path("user/<int:id>/", manage_user),
     # PROPERTY
+    path("properties/", public_properties),
+    path("public-properties/", public_properties),
     path("property/", manage_property),
     path("property/<int:id>/", manage_property),
     path("property/<int:property_id>/rent/", rent_property),

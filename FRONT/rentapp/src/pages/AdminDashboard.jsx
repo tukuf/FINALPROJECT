@@ -294,9 +294,9 @@ function AdminDashboard() {
                     <thead>
                       <tr>
                         <th>Image</th>
-                        <th>Location</th>
+                        <th>Property</th>
                         <th>Price</th>
-                        <th>Status</th>
+                        <th>Status / Occupant</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -315,18 +315,29 @@ function AdminDashboard() {
                             />
                           </td>
                           <td>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                              <span style={{ fontSize: "0.85rem" }}>📍</span>
+                            <div style={{ fontWeight: 600, color: "var(--gray-900)" }}>{prop.title}</div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.78rem", color: "var(--gray-500)" }}>
+                              <span>📍</span>
                               <span>{prop.location}</span>
                             </div>
                           </td>
                           <td style={{ fontWeight: 600, color: "var(--gray-800)" }}>
-                            ${prop.price}
+                            TZS {Number(prop.price).toLocaleString()}
                           </td>
                           <td>
-                            <span className={`badge ${prop.is_available ? "badge-success" : "badge-danger"}`}>
-                              {prop.is_available ? "Available" : "Occupied"}
+                            <span className={`badge ${prop.is_available ? "badge-success" : prop.status === "Reserved" ? "badge-warning" : "badge-danger"}`}>
+                              {prop.status || (prop.is_available ? "Available" : "Occupied")}
                             </span>
+                            {prop.status === "Reserved" && prop.current_reservation?.customer_name && (
+                              <div style={{ fontSize: "0.78rem", color: "#d97706", marginTop: 2, fontWeight: 600 }}>
+                                👤 Reserved by: {prop.current_reservation.customer_name}
+                              </div>
+                            )}
+                            {(prop.status === "Occupied" || (!prop.is_available && prop.status !== "Reserved")) && prop.current_occupant?.username && (
+                              <div style={{ fontSize: "0.78rem", color: "#dc2626", marginTop: 2, fontWeight: 600 }}>
+                                👤 Rented by: {prop.current_occupant.username}
+                              </div>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -369,6 +380,7 @@ function AdminDashboard() {
                   <table>
                     <thead>
                       <tr>
+                        <th>Client / User</th>
                         <th>Property</th>
                         <th>Duration</th>
                         <th>Status</th>
@@ -378,6 +390,9 @@ function AdminDashboard() {
                     <tbody>
                       {pendingRequests.map((req) => (
                         <tr key={req.id}>
+                          <td style={{ fontWeight: 700, color: "var(--primary-700)" }}>
+                            👤 {req.user?.username || "Unknown User"}
+                          </td>
                           <td style={{ fontWeight: 600 }}>
                             {req.property?.title || `Property #${req.property?.id || req.property}`}
                           </td>
@@ -417,7 +432,7 @@ function AdminDashboard() {
                       ))}
                       {pendingRequests.length === 0 && (
                         <tr>
-                          <td colSpan={4} style={{ textAlign: "center", color: "var(--gray-400)", padding: 32 }}>
+                          <td colSpan={5} style={{ textAlign: "center", color: "var(--gray-400)", padding: 32 }}>
                             No pending requests
                           </td>
                         </tr>

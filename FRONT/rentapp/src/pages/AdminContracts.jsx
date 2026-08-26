@@ -108,7 +108,7 @@ function AdminContracts() {
 
     Swal.fire({
       title: "Request Auto-Filled",
-      html: "<strong>" + request.user.username + "</strong> requested <strong>" + request.property.title + "</strong> for <strong>" + durationMonths + " month(s)</strong><br/>Total rent: <strong>$" + totalRent.toFixed(2) + "</strong>",
+      html: "<strong>" + request.user.username + "</strong> requested <strong>" + request.property.title + "</strong> for <strong>" + durationMonths + " month(s)</strong><br/>Total rent: <strong>TZS " + totalRent.toLocaleString() + "</strong>",
       icon: "info",
       confirmButtonText: "OK",
     });
@@ -318,7 +318,7 @@ function AdminContracts() {
     const termsList = [
       { t: "1. Property Description", d: `The Landlord hereby agrees to rent to the Tenant the residential property located at ${prop?.location || "N/A"}, including all fixtures, appliances, and furniture currently on the premises.` },
       { t: "2. Term of Lease", d: `This rental agreement shall commence on ${contract.start_date || "N/A"}, and shall continue until ${contract.end_date || "N/A"}, unless otherwise terminated in accordance with the terms of this agreement.` },
-      { t: "3. Rental Payment", d: `The monthly rent shall be $${parseFloat(prop?.price || 0).toFixed(2)}, payable on the 1st day of each month. Payment shall be made via bank transfer to the Landlord's designated account.` },
+      { t: "3. Rental Payment", d: `The monthly rent shall be TZS ${Number(prop?.price || 0).toLocaleString()}, payable on the 1st day of each month. Payment shall be made via bank transfer to the Landlord's designated account.` },
       { t: "4. Security Deposit", d: `The Tenant agrees to pay a security deposit prior to occupancy. The deposit shall cover damages beyond normal wear and tear, if any.` },
       { t: "5. Use of Property", d: `The Tenant shall use the premises solely for residential purposes and shall not sublease or assign this agreement without written consent from the Landlord.` },
       { t: "6. Maintenance and Repairs", d: `The Tenant shall keep the property clean and in good condition. The Landlord is responsible for major repairs unless damages are caused by the Tenant's negligence.` },
@@ -328,74 +328,60 @@ function AdminContracts() {
     ];
 
     const leftMargin = 15;
-    termsList.forEach(term => {
+    const rightMargin = pw - 15;
+    y = boxY + 30;
+
+    termsList.forEach((term) => {
+      if (y > 270) {
+        doc.addPage();
+        y = 20;
+      }
       doc.setFont("helvetica", "bold");
       doc.text(term.t, leftMargin, y);
-      y += 4;
+      y += 5;
       doc.setFont("helvetica", "normal");
-      const lines = doc.splitTextToSize(term.d, pw - 30);
-      doc.text(lines, leftMargin, y);
-      y += (lines.length * 4) + 4;
+      const splitText = doc.splitTextToSize(term.d, rightMargin - leftMargin);
+      doc.text(splitText, leftMargin, y);
+      y += splitText.length * 4.5 + 4;
     });
 
-    // Signature Area
-    y = ph - 55;
-    doc.setFont("helvetica", "italic");
-    doc.text(`Signed on this day, ${dateFormatted}.`, leftMargin, y);
-    
+    if (y > 240) {
+      doc.addPage();
+      y = 20;
+    }
+
     y += 10;
-    doc.setDrawColor(200, 180, 140);
-    doc.line(10, y, pw - 10, y);
-    
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(8);
+    doc.text(`Signed on this day, ${dateFormatted}.`, leftMargin, y);
+
     y += 15;
-    // Signatures
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    
-    doc.text("_________________________", pw / 4, y, { align: "center" });
-    doc.text("Landlord Signature", pw / 4, y + 5, { align: "center" });
-    doc.setFont("helvetica", "bold");
-    doc.text(prop?.owner?.username || "RentalHub Admin", pw / 4, y + 12, { align: "center" });
-    
-    doc.setFont("helvetica", "normal");
-    doc.text("_________________________", (pw / 4) * 3, y, { align: "center" });
-    doc.text("Tenant Signature", (pw / 4) * 3, y + 5, { align: "center" });
-    doc.setFont("helvetica", "bold");
-    doc.text(contract.user?.username || "Tenant", (pw / 4) * 3, y + 12, { align: "center" });
-
-    // --- PAYMENT SUCCESS STAMP ---
-    const stampX = pw / 2;
-    const stampY = y - 5;
-    
-    doc.setDrawColor(34, 197, 94); // Green
-    doc.setLineWidth(0.8);
-    doc.circle(stampX, stampY, 20);
-    doc.setLineWidth(0.3);
-    doc.circle(stampX, stampY, 18);
-    
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(34, 197, 94);
-    
-    doc.setFontSize(7);
-    doc.text("RENTAL AGREEMENT", stampX, stampY - 5, { align: "center" });
-    
-    doc.setFontSize(9);
-    doc.text("PAID", stampX, stampY + 1, { align: "center" });
-    
-    doc.setFontSize(7);
-    doc.text("PAYMENT SUCCESSFUL", stampX, stampY + 7, { align: "center" });
+    const sigBoxW = (rightMargin - leftMargin - 20) / 2;
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(6);
-    const payRef = contract.payment_reference || "N/A";
-    doc.text(`Ref: ${payRef}`, stampX, stampY + 12, { align: "center" });
-    // -----------------------------
+    doc.setFontSize(8.5);
+    doc.line(leftMargin, y + 15, leftMargin + sigBoxW, y + 15);
+    doc.text("Landlord / Manager Signature", leftMargin, y + 20);
+
+    doc.line(leftMargin + sigBoxW + 20, y + 15, rightMargin, y + 15);
+    doc.text("Tenant Signature", leftMargin + sigBoxW + 20, y + 20);
+
+    if (contract.status === "SIGNED") {
+      const stampX = rightMargin - 45;
+      const stampY = y - 5;
+      doc.setDrawColor(34, 197, 94);
+      doc.setFillColor(240, 253, 244);
+      doc.roundedRect(stampX, stampY, 40, 18, 3, 3, "FD");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(22, 101, 52);
+      doc.text("DIGITALLY SIGNED", stampX + 20, stampY + 7, { align: "center" });
+      doc.setFontSize(7);
+      const payRef = contract.payment_ref || `CP-${contract.id}`;
+      doc.text(`Ref: ${payRef}`, stampX + 20, stampY + 13, { align: "center" });
+    }
 
     doc.save(`RentalHub_Contract_${contract.id}_${contract.user?.username || "Client"}.pdf`);
-
-    if (contract.status === "SENT") {
-      updateContractStatus(contract.id, "SIGNED");
-    }
   };
 
   const updateContractStatus = async (contractId, newStatus) => {
@@ -412,7 +398,7 @@ function AdminContracts() {
     (r) => !contracts.some((c) => c.user?.username === r.user?.username && c.property?.id === r.property?.id)
   );
 
-  const fmt = (val) => "$" + parseFloat(val || 0).toFixed(2);
+  const fmt = (val) => "TZS " + Number(val || 0).toLocaleString();
 
   return (
     <MainLayout role="ADMIN">
@@ -440,7 +426,7 @@ function AdminContracts() {
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
                 <span style={{ color: "var(--gray-500)", fontSize: "0.85rem" }}>Monthly Price:</span>
-                <span style={{ fontWeight: 600, color: "var(--primary-600)" }}>{"$" + summary.propertyPrice.toFixed(2)}</span>
+                <span style={{ fontWeight: 600, color: "var(--primary-600)" }}>{"TZS " + summary.propertyPrice.toLocaleString()}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
                 <span style={{ color: "var(--gray-500)", fontSize: "0.85rem" }}>Duration:</span>
@@ -448,7 +434,7 @@ function AdminContracts() {
               </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span style={{ color: "var(--gray-500)", fontSize: "0.85rem" }}>Total Rent:</span>
-                <span style={{ fontWeight: 700, color: "var(--success-600)", fontSize: "1.1rem" }}>{"$" + summary.totalRent.toFixed(2)}</span>
+                <span style={{ fontWeight: 700, color: "var(--success-600)", fontSize: "1.1rem" }}>{"TZS " + summary.totalRent.toLocaleString()}</span>
               </div>
             </div>
           )}

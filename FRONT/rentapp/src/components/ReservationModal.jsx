@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import api from "../services/authService";
+import api, { authService } from "../services/authService";
 import Swal from "sweetalert2";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -12,10 +12,7 @@ const fmt = (d) =>
       })
     : "N/A";
 
-const fmtMoney = (v) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
-    v ?? 0
-  );
+const fmtMoney = (v) => "TZS " + Number(v ?? 0).toLocaleString();
 
 function calcMonths(start, end) {
   if (!start || !end) return 0;
@@ -89,9 +86,68 @@ export default function ReservationPanel({ property, onReservationCreated, onRen
   const [endDate, setEndDate] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  const [userReservation, setUserReservation] = useState(null);
+
   const totalMonths = calcMonths(startDate, endDate);
   const monthlyRent = parseFloat(property?.price ?? 0);
   const totalAmount = monthlyRent * totalMonths;
+
+  // Check if current logged-in user holds the active reservation for this property
+  const checkUserReservation = useCallback(async () => {
+    const user = authService.getUser();
+    if (!user || property?.status !== "Reserved") {
+      setUserReservation(null);
+      return;
+    }
+
+    if (
+      property?.current_reservation &&
+      (String(property.current_reservation.customer_id) === String(user.id) ||
+        property.current_reservation.customer_name === user.username)
+    ) {
+      setUserReservation(property.current_reservation);
+      return;
+    }
+
+    try {
+      const res = await api.get("/api/reservation/");
+      const activeRes = (res.data || []).find(
+        (r) =>
+          (r.property?.id === property.id || r.property === property.id) &&
+          ["RESERVED", "PENDING_PAYMENT", "PAYMENT_PROCESSING"].includes(r.reservation_status)
+      );
+      setUserReservation(activeRes || null);
+    } catch (err) {
+      console.error("Error fetching reservation detail:", err);
+      setUserReservation(null);
+    }
+  }, [property]);
+
+  useEffect(() => {
+    checkUserReservation();
+  }, [checkUserReservation]);
+
+  const handleCancelReservation = async (reservationId) => {
+    const result = await Swal.fire({
+      title: "Cancel Reservation?",
+      text: "Are you sure you want to cancel your reservation for this house?",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#ef4444",
+      confirmButtonText: "Yes, Cancel",
+    });
+
+    if (result.isConfirmed) {
+      try {
+        await api.delete(`/api/reservation/${reservationId}/`);
+        Swal.fire("Cancelled", "Your reservation has been cancelled.", "success");
+        setUserReservation(null);
+        if (onReservationCreated) onReservationCreated(null);
+      } catch (err) {
+        Swal.fire("Error", "Failed to cancel reservation.", "error");
+      }
+    }
+  };
 
   const handleReserve = async () => {
     if (!startDate || !endDate) {
@@ -154,13 +210,71 @@ export default function ReservationPanel({ property, onReservationCreated, onRen
   const isOccupied = property?.status === "Occupied" || !property?.is_available;
 
   if (isReserved) {
+    if (userReservation) {
+      return (
+        <div style={{ background: "linear-gradient(135deg, #fef3c7 0%, #fffbe6 100%)", border: "1.5px solid #fde68a", borderRadius: "16px", padding: "20px", marginTop: "20px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
+            <span style={{ fontSize: "1.6rem" }}>🎉</span>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: "1.05rem", color: "#92400e" }}>You Have Reserved This Property!</div>
+              <div style={{ fontSize: "0.85rem", color: "#b45309" }}>Complete your payment within 24 hours to finalize your rental.</div>
+            </div>
+          </div>
+
+          <div style={{ background: "#fff", borderRadius: "12px", padding: "14px", margin: "12px 0", border: "1px solid #fde68a" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px", fontSize: "0.88rem" }}>
+              <span style={{ color: "#6b7280" }}>Rental Dates:</span>
+              <span style={{ fontWeight: 600, color: "#1f2937" }}>{fmt(userReservation.start_date)} – {fmt(userReservation.end_date)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px", fontSize: "0.88rem" }}>
+              <span style={{ color: "#6b7280" }}>Total Amount:</span>
+              <span style={{ fontWeight: 800, color: "#059669", fontSize: "1.05rem" }}>{fmtMoney(userReservation.total_amount)}</span>
+            </div>
+            {userReservation.expiry_time && (
+              <div style={{ borderTop: "1px dashed #e5e7eb", paddingTop: "10px", marginTop: "8px" }}>
+                <div style={{ fontSize: "0.78rem", color: "#6b7280", textAlign: "center", marginBottom: "6px", fontWeight: 600 }}>
+                  TIME REMAINING TO COMPLETE PAYMENT:
+                </div>
+                <CountdownTimer expiryTime={userReservation.expiry_time} onExpired={checkUserReservation} />
+              </div>
+            )}
+          </div>
+
+          {/* Pay Now Button */}
+          <button
+            onClick={() => onRentNow ? onRentNow(userReservation) : null}
+            style={{
+              width: "100%", padding: "14px", borderRadius: "12px", border: "none",
+              background: "linear-gradient(135deg, #10b981 0%, #059669 100%)", color: "#fff",
+              fontWeight: 800, fontSize: "1rem", cursor: "pointer", display: "flex",
+              alignItems: "center", justifyContent: "center", gap: "8px",
+              boxShadow: "0 4px 14px rgba(16, 185, 129, 0.35)", marginTop: "10px"
+            }}
+          >
+            💳 Pay Now ({fmtMoney(userReservation.total_amount)})
+          </button>
+
+          <button
+            onClick={() => handleCancelReservation(userReservation.id)}
+            style={{
+              width: "100%", padding: "10px", borderRadius: "10px", border: "1px solid #fca5a5",
+              background: "#fff", color: "#dc2626", fontWeight: 600, fontSize: "0.85rem",
+              cursor: "pointer", marginTop: "10px"
+            }}
+          >
+            ✕ Cancel Reservation
+          </button>
+        </div>
+      );
+    }
+
     return (
       <div style={statusBannerStyle("#fef3c7", "#92400e", "#fde68a")}>
         <span style={{ fontSize: "1.3rem" }}>🔒</span>
         <div>
           <div style={{ fontWeight: 700, marginBottom: 2 }}>Currently Reserved</div>
           <div style={{ fontSize: "0.85rem", opacity: 0.85 }}>
-            This property is reserved by another customer. Check back later.
+            This property is reserved by another customer. If their 24-hour reservation expires, it will become available again.
           </div>
         </div>
       </div>
@@ -172,9 +286,21 @@ export default function ReservationPanel({ property, onReservationCreated, onRen
       <div style={statusBannerStyle("#fee2e2", "#7f1d1d", "#fecaca")}>
         <span style={{ fontSize: "1.3rem" }}>🚫</span>
         <div>
-          <div style={{ fontWeight: 700, marginBottom: 2 }}>Currently Occupied</div>
-          <div style={{ fontSize: "0.85rem", opacity: 0.85 }}>
-            This property is not available for rent at this time.
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>Currently Occupied</div>
+          <div style={{ fontSize: "0.85rem", opacity: 0.9 }}>
+            {property?.occupied_start_date && property?.occupied_end_date ? (
+              <>
+                Occupied starting from <strong>{fmt(property.occupied_start_date)}</strong> to <strong>{fmt(property.occupied_end_date)}</strong>.
+                <br />
+                📅 This house will be <strong>available (free) again starting on {fmt(property.occupied_end_date)}</strong>.
+              </>
+            ) : property?.next_available_date ? (
+              <>
+                📅 This house will be <strong>available (free) again starting on {fmt(property.next_available_date)}</strong>.
+              </>
+            ) : (
+              <>This property is currently occupied and not available for rent at this time.</>
+            )}
           </div>
         </div>
       </div>
